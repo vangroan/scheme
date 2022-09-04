@@ -40,6 +40,21 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    /// Original source passed into the lexer.
+    #[inline]
+    pub fn source(&self) -> &str {
+        self.source
+    }
+
+    /// Indicates whether the lexer is at the end of the source.
+    ///
+    /// Note that source can contain '\0' (end-of-file) characters,
+    /// but not be at the actual end. It's thus important to verify
+    /// with this function whenever a [`TokenKind::EOF`] is encountered.
+    pub fn at_end(&self) -> bool {
+        self.cursor.at_end()
+    }
+
     /// Primes the lexer to consume the next token.
     fn start_token(&mut self) {
         self.start_offset = self.cursor.offset();
@@ -90,15 +105,11 @@ impl<'a> Lexer<'a> {
         match self.cursor.char() {
             '(' => self.make_token(T::LeftParen),
             ')' => self.make_token(T::RightParen),
-            '0'..='9' => {
-                todo!("number")
-            }
+            '0'..='9' => self.consume_number(),
             '"' => {
                 todo!("string")
             }
-            '\'' => {
-                todo!("quote")
-            }
+            '\'' => self.make_token(T::QuoteMark),
             EOF_CHAR => {
                 // Source may contain a \0 character but not
                 // actually be at the end of the stream.
@@ -120,6 +131,17 @@ impl<'a> Lexer<'a> {
 
 /// Methods for consuming token types.
 impl<'a> Lexer<'a> {
+    fn consume_number(&mut self) -> Token {
+        trace!("consume_number {:?}", self.cursor.current());
+        debug_assert!(rules::is_symbol(self.cursor.char()));
+
+        while rules::is_number(self.cursor.peek()) {
+            self.cursor.bump();
+        }
+
+        self.make_token(TokenKind::Number)
+    }
+
     fn consume_symbol(&mut self) -> Token {
         trace!("consume_symbol {:?}", self.cursor.current());
         debug_assert!(rules::is_symbol(self.cursor.char()));
@@ -142,14 +164,57 @@ mod rules {
             c,
             '\u{0020}' // space
             | '\u{0009}' // tab
+            | '\u{000A}' // linefeed
+            | '\u{000D}' // carriage return
             | '\u{00A0}' // no-break space
             | '\u{FEFF}' // zero width no-break space
         )
     }
 
     #[inline(always)]
+    pub fn is_number(c: char) -> bool {
+        matches!(c, '0'..='9')
+    }
+
+    #[inline(always)]
     pub fn is_symbol(c: char) -> bool {
         matches!(c, 'a'..='z' | 'A'..='Z' | '_')
+    }
+}
+
+impl<'a> IntoIterator for Lexer<'a> {
+    type Item = Token;
+    type IntoIter = LexerIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        LexerIter {
+            lexer: self,
+            done: false,
+        }
+    }
+}
+
+/// Convenience iterator that wraps the lexer.
+pub struct LexerIter<'a> {
+    // Track end so an EOF token is emitted once.
+    done: bool,
+    lexer: Lexer<'a>,
+}
+
+impl<'a> Iterator for LexerIter<'a> {
+    type Item = Token;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.lexer.at_end() {
+            if self.done {
+                None
+            } else {
+                self.done = true;
+                Some(self.lexer.next_token())
+            }
+        } else {
+            Some(self.lexer.next_token())
+        }
     }
 }
 
