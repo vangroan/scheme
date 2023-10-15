@@ -1,20 +1,24 @@
 //! Token Definition
 
-use crate::span::BytePos;
+use crate::span::Span;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum TokenKind {
     LeftParen,
     RightParen,
-    Number,
-    Symbol,
-    String,
+    Atom,
     QuoteMark,
     EOF,
 }
 
+#[derive(Debug, Clone)]
 pub struct Token {
-    pub offset: BytePos,
-    pub size: u32,
     pub kind: TokenKind,
+    pub span: Span,
+}
+
+impl Token {
+    pub fn fragment<'a>(&self, source: &'a str) -> &'a str {
+        &source[self.span.as_range()]
+    }
 }

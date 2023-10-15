@@ -1,44 +1,34 @@
 //! Location in source code.
 
-/// Absolute byte position of a character in source code.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BytePos(pub(crate) u32);
+use std::ops::Range;
 
-impl BytePos {
-    pub fn from_u32(index: u32) -> BytePos {
-        BytePos(index)
-    }
-
-    pub fn to_u32(self) -> u32 {
-        self.0
-    }
+#[derive(Debug, Clone)]
+pub struct Span {
+    pub(crate) lo: usize, // inclusive
+    pub(crate) hi: usize, // exclusive
 }
 
-impl std::cmp::PartialEq<u32> for BytePos {
-    fn eq(&self, other: &u32) -> bool {
-        self.0 == *other
+impl Span {
+    pub fn new(lo: usize, size: usize) -> Self {
+        Self { lo, hi: lo + size }
     }
-}
 
-impl std::fmt::Display for BytePos {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(&self.0, f)
+    #[inline(always)]
+    pub fn low(&self) -> usize {
+        self.lo
     }
-}
 
-pub struct Pos {
-    pub offset: BytePos,
-    pub column: u16,
-    pub line: u16,
-}
+    #[inline(always)]
+    pub fn high(&self) -> usize {
+        self.hi
+    }
 
-#[cfg(test)]
-mod test {
-    use super::*;
+    #[inline(always)]
+    pub fn size(&self) -> usize {
+        self.hi - self.lo
+    }
 
-    #[test]
-    fn test_span_type_sizes() {
-        assert_eq!(std::mem::size_of::<BytePos>(), 4);
-        assert_eq!(std::mem::size_of::<Pos>(), 8);
+    pub fn as_range(&self) -> Range<usize> {
+        self.lo..self.hi
     }
 }

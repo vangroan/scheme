@@ -1,7 +1,7 @@
 //! Lexical analysis.
+use crate::span::Span;
 use crate::{
     cursor::{Cursor, EOF_CHAR},
-    span::BytePos,
     token::{Token, TokenKind},
 };
 
@@ -17,7 +17,9 @@ pub struct Lexer<'a> {
     source: &'a str,
     /// Byte position where the current token starts
     /// in the original source string.
-    start_offset: BytePos,
+    start_pos: usize,
+    /// Copy of the previous token that was created.
+    prev_token: Option<Token>,
 }
 
 impl<'a> Lexer<'a> {
@@ -25,18 +27,19 @@ impl<'a> Lexer<'a> {
     pub fn new(source: &'a str) -> Self {
         let mut cursor = Cursor::new(source);
 
-        // Initial state of the cursor is a non-existant EOF char,
+        // Initial state of the cursor is a non-existent EOF char,
         // but the initial state of the lexer should be a valid
         // token starting character.
         //
         // Prime the cursor for the first iteration.
         cursor.bump();
-        let start_offset = cursor.offset();
+        let start_pos = cursor.pos();
 
         Self {
             cursor,
             source,
-            start_offset,
+            start_pos,
+            prev_token: None,
         }
     }
 
@@ -44,6 +47,14 @@ impl<'a> Lexer<'a> {
     #[inline]
     pub fn source(&self) -> &str {
         self.source
+    }
+
+    pub fn rest(&self) -> &str {
+        self.cursor.rest()
+    }
+
+    pub fn current_token(&self) -> Option<&Token> {
+        self.prev_token.as_ref()
     }
 
     /// Indicates whether the lexer is at the end of the source.
@@ -57,30 +68,41 @@ impl<'a> Lexer<'a> {
 
     /// Primes the lexer to consume the next token.
     fn start_token(&mut self) {
-        self.start_offset = self.cursor.offset();
+        // Default position to one after last.
+        self.start_pos = self
+            .cursor
+            .try_pos()
+            .unwrap_or_else(|| self.cursor.source().len());
     }
 
     fn make_token(&mut self, kind: TokenKind) -> Token {
-        let start = self.start_offset.0 as u32;
-        let end = self.cursor.peek_offset().0;
+        let start = self.start_pos; // inclusive
+        let end = self.cursor.peek_offset(); // exclusive
 
         // start and end can be equal, and a token can have 0 size.
-        debug_assert!(end >= start);
+        debug_assert!(start <= end);
         let size = end - start;
+
+        let span = Span::new(start, size);
 
         // After this token is built, the lexer's internal state
         // is no longer dedicated to this iteration, but to preparing
         // for the next iteration.
-        let token = Token {
-            offset: self.start_offset,
-            size,
-            kind,
-        };
+        let token = Token { kind, span };
 
         // Position the cursor to the starting character for the
         // next token, so the lexer's internal state is primed
         // for the next iteration.
         self.cursor.bump();
+
+        // Store the token so the parser can check that the current token is.
+        self.prev_token = Some(token.clone());
+
+        println!(
+            "make_token() -> {:?} {:?}",
+            token,
+            token.fragment(self.source)
+        );
 
         token
     }
@@ -90,68 +112,86 @@ impl<'a> Lexer<'a> {
         // Shorter name for more readable match body.
         use TokenKind as T;
 
-        trace!("before -> {:?}", self.cursor.current());
-        // Discard whitespace
-        while rules::is_whitespace(self.cursor.char()) {
-            trace!("skip whitespace -> {:?}", self.cursor.current());
+        loop {
+            // Invariant: The cursor must be pointing to the start of the
+            //            remainder of the source to be consumed next.
+            self.start_token();
+            trace!("current -> {:?}", self.cursor.try_current());
+
+            let token = match self.cursor.try_char() {
+                Some(ch) if ch.is_whitespace() => {
+                    self.cursor.bump();
+                    continue;
+                }
+                Some(';') => {
+                    self.skip_line();
+                    continue;
+                }
+                Some('(') => self.make_token(T::LeftParen),
+                Some(')') => self.make_token(T::RightParen),
+                Some('\'') => self.make_token(T::QuoteMark),
+                Some(EOF_CHAR) => {
+                    // Source may contain a \0 character but not
+                    // actually be at the end of the stream.
+                    self.make_token(TokenKind::EOF)
+                }
+                Some(_) => self.consume_atom(),
+                None => self.make_token(TokenKind::EOF),
+            };
+
+            return token;
+        }
+    }
+
+    /// Skip over the remainder of a line, until we encounter a newline character,
+    /// or reach the end of the stream.
+    fn skip_line(&mut self) {
+        while let Some(ch) = self.cursor.try_char() {
+            if ch == '\n' {
+                break;
+            } else {
+                self.cursor.bump();
+            }
+        }
+    }
+
+    fn consume_atom(&mut self) -> Token {
+        // Consume until whitespace, or parentheses.
+        while let Some(ch) = self.cursor.peek_char() {
+            if ch.is_whitespace() || matches!(ch, '(' | ')') {
+                break;
+            }
+
             self.cursor.bump();
         }
 
-        // Invariant: The cursor must be pointing to the start of the
-        //            remainder of the source to be consumed next.
-        self.start_token();
-
-        trace!("current -> {:?}", self.cursor.current());
-        match self.cursor.char() {
-            '(' => self.make_token(T::LeftParen),
-            ')' => self.make_token(T::RightParen),
-            '0'..='9' => self.consume_number(),
-            '"' => {
-                todo!("string")
-            }
-            '\'' => self.make_token(T::QuoteMark),
-            EOF_CHAR => {
-                // Source may contain a \0 character but not
-                // actually be at the end of the stream.
-                self.make_token(TokenKind::EOF)
-            }
-            c if rules::is_symbol(c) => self.consume_symbol(),
-            _ => {
-                // The source stream has run out, so we signal
-                // the caller by emitting an end-of-file token that
-                // doesn't exist in the text.
-                //
-                // The token's span thus points to the element
-                // beyond the end of the collection, and has 0 length.
-                todo!();
-            }
-        }
+        self.make_token(TokenKind::Atom)
     }
 }
 
 /// Methods for consuming token types.
 impl<'a> Lexer<'a> {
-    fn consume_number(&mut self) -> Token {
-        trace!("consume_number {:?}", self.cursor.current());
-        debug_assert!(rules::is_symbol(self.cursor.char()));
-
-        while rules::is_number(self.cursor.peek()) {
-            self.cursor.bump();
-        }
-
-        self.make_token(TokenKind::Number)
-    }
-
-    fn consume_symbol(&mut self) -> Token {
-        trace!("consume_symbol {:?}", self.cursor.current());
-        debug_assert!(rules::is_symbol(self.cursor.char()));
-
-        while rules::is_symbol(self.cursor.peek()) {
-            self.cursor.bump();
-        }
-
-        self.make_token(TokenKind::Symbol)
-    }
+    // fn consume_number(&mut self) -> Token {
+    //     trace!("consume_number {:?}", self.cursor.current());
+    //     debug_assert!(rules::is_symbol(self.cursor.char()));
+    //
+    //     while rules::is_number(self.cursor.peek_char()) {
+    //         self.cursor.bump();
+    //     }
+    //
+    //     self.make_token(TokenKind::Number)
+    // }
+    //
+    // fn consume_symbol(&mut self) -> Token {
+    //     trace!("consume_symbol {:?}", self.cursor.current());
+    //     debug_assert!(rules::is_symbol(self.cursor.char()));
+    //
+    //     while rules::is_symbol(self.cursor.peek_char()) {
+    //         self.cursor.bump();
+    //     }
+    //
+    //     self.make_token(TokenKind::Symbol)
+    // }
 }
 
 /// Functions for testing characters.
@@ -236,11 +276,11 @@ mod test {
         assert_eq!(lexer.cursor.current(), (0, '('));
         assert_eq!(lexer.next_token().kind, TokenKind::LeftParen);
         assert_eq!(lexer.cursor.current(), (1, 'a')); //  rest: "a b c)"
-        assert_eq!(lexer.next_token().kind, TokenKind::Symbol);
+        assert_eq!(lexer.next_token().kind, TokenKind::Atom);
         assert_eq!(lexer.cursor.current(), (2, ' ')); // rest: " b c)"
-        assert_eq!(lexer.next_token().kind, TokenKind::Symbol); // b
+        assert_eq!(lexer.next_token().kind, TokenKind::Atom); // b
         assert_eq!(lexer.cursor.current(), (4, ' ')); // rest: " c)"
-        assert_eq!(lexer.next_token().kind, TokenKind::Symbol); // c
+        assert_eq!(lexer.next_token().kind, TokenKind::Atom); // c
         assert_eq!(lexer.cursor.current(), (6, ')')); // rest: ")"
         assert_eq!(lexer.next_token().kind, TokenKind::RightParen);
     }

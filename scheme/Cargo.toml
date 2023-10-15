@@ -17,3 +17,4 @@ codegen-units = 1
 debug = true
 
 [dependencies]
+scheme-engine = { path = "../scheme-engine" }

@@ -1,11 +1,15 @@
 mod cursor;
+mod env;
 mod error;
 mod eval;
-mod lex;
-mod parse;
+mod expr;
+mod handle;
+mod lexer;
+mod opcode;
+mod parser;
 mod span;
 mod token;
-mod token_stream;
-mod value;
+
+pub use parser::parse;
 
 pub mod prelude {}
