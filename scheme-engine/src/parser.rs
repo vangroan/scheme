@@ -1,4 +1,4 @@
-use std::rc::Rc;
+//! Parser.
 
 use crate::{
     error::{Error, Result},
@@ -74,16 +74,25 @@ fn parse_atom(token: Token, fragment: &str) -> Result<Expr> {
             Some('x') => todo!("parse hexadecimal number"),
             _ => todo!("unexpected character"),
         },
+        '+' | '-' | '*' => {
+            // TODO: The complex identifier rules
+            parse_identifier(token, fragment)
+        }
         _ => Err(Error::Reason(format!("unexpected character: {ch:?}"))),
     }
 }
 
-fn parse_number(token: Token, fragment: &str) -> Result<Expr> {
+fn parse_number(_token: Token, fragment: &str) -> Result<Expr> {
     let number = fragment
         .parse::<f64>()
         .map_err(|err| Error::Reason(format!("failed to parse number: {err}")))?;
 
     Ok(Expr::Number(number))
+}
+
+fn parse_identifier(_token: Token, fragment: &str) -> Result<Expr> {
+    // TODO: The complex identifier rules
+    Ok(Expr::Ident(fragment.into()))
 }
 
 #[cfg(test)]

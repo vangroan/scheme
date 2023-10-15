@@ -25,10 +25,22 @@ impl<T> Handle<T> {
     pub fn borrow_mut(&mut self) -> RefMut<'_, T> {
         self.rc.borrow_mut()
     }
+
+    pub fn ptr_eq(&self, other: &Handle<T>) -> bool {
+        Rc::ptr_eq(&self.rc, &other.rc)
+    }
+}
+
+impl<T> Clone for Handle<T> {
+    fn clone(&self) -> Self {
+        Handle {
+            rc: self.rc.clone(),
+        }
+    }
 }
 
 impl<T: fmt::Debug> fmt::Debug for Handle<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(&*self.rc.borrow(), f)
+        f.debug_tuple("Handle").field(&*self.rc.borrow()).finish()
     }
 }
