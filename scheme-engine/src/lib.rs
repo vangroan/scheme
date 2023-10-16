@@ -12,12 +12,14 @@ mod parser;
 mod span;
 mod symbol;
 mod token;
+mod vm;
 
 pub use self::compiler::compile;
 pub use self::core::init_core;
 pub use self::env::Env;
 pub use self::handle::Handle;
 pub use self::parser::parse;
+pub use self::vm::eval;
 
 pub mod prelude {}
 

@@ -10,12 +10,14 @@ pub enum Op {
     PushFalse,
     PushConstant(ConstantId),
 
+    /// Return from a procedure call.
+    Return,
+
     /// Load the variable in the current environment onto the operand stack.
     LoadEnvVar(SymbolId),
 
     /// Call the Scheme procedure stored in the current environment.
     CallEnvProc {
-        symbol: SymbolId,
         arity: u8,
     },
 
@@ -27,6 +29,9 @@ pub enum Op {
     CallNative {
         arity: u8,
     },
+
+    /// End of bytecode sentinel.
+    End,
 }
 
 #[cfg(test)]

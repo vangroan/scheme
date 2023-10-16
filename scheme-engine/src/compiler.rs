@@ -21,6 +21,7 @@ pub fn compile(env: Handle<Env>, expr: &Expr) -> Result<Handle<Closure>> {
     };
 
     compiler.compile_expr(expr)?;
+    compiler.compile_end()?;
 
     let (_env, proc) = compiler.take_procedure()?;
 
@@ -57,6 +58,7 @@ impl Compiler {
             code: proc.code.into_boxed_slice(),
             // The top level procedures never take arguments.
             arity: 0,
+            constants: proc.constants.into_boxed_slice(),
             // By storing the procedure in the environment
             // we've created a circular reference.
             env: env.downgrade(),
@@ -76,7 +78,8 @@ impl Compiler {
             }
             // Boolean literal
             Expr::Bool(boolean) => {
-                todo!("boolean literal")
+                let op = if *boolean { Op::PushTrue } else { Op::PushFalse };
+                self.proc.emit_op(op);
             }
             Expr::Ident(ident) => {
                 // Attempt to access a variable by identifier.
@@ -89,6 +92,11 @@ impl Compiler {
             _ => todo!("compile_expr: {expr:?}"),
         }
 
+        Ok(())
+    }
+
+    fn compile_end(&mut self) -> Result<()> {
+        self.proc.emit_op(Op::End);
         Ok(())
     }
 

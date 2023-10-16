@@ -34,7 +34,15 @@ fn run_repl() {
                             println!("  {index:>6} : {op:?}");
                         }
 
-                        // TODO: Run closure in VM
+                        // Run closure in VM
+                        match scheme_engine::eval(closure) {
+                            Ok(value) => {
+                                println!("{:?}", value);
+                            }
+                            Err(err) => {
+                                eprintln!("error: {err}");
+                            }
+                        }
                     }
                     Err(err) => {
                         eprintln!("error: {err}");
