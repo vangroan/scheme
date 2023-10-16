@@ -113,10 +113,15 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
             Op::PushFalse => {
                 vm.operand.push(Expr::Bool(false));
             }
+
             Op::Return => todo!("return"),
             Op::LoadEnvVar(symbol) => {
                 let value = env.get_var(symbol).cloned().unwrap_or(Expr::Nil);
                 vm.operand.push(value);
+            }
+            Op::StoreEnvVar(symbol) => {
+                let value = vm.operand.last().cloned().unwrap_or(Expr::Nil);
+                env.set_var(symbol, value)?;
             }
             Op::PushConstant(constant_id) => {
                 let value = proc
@@ -125,6 +130,9 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
                     .cloned()
                     .unwrap_or(Expr::Nil);
                 vm.operand.push(value);
+            }
+            Op::Pop => {
+                let _ = vm.operand.pop();
             }
             Op::CallEnvProc { arity } => todo!("call procedure"),
 

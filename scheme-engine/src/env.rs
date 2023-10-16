@@ -40,6 +40,23 @@ impl Env {
         self.var_values.get(symbol.as_usize())
     }
 
+    pub fn set_var(&mut self, symbol: SymbolId, value: Expr) -> Result<()> {
+        if symbol.as_usize() < self.var_values.len() {
+            self.var_values[symbol.as_usize()] = value;
+            Ok(())
+        } else {
+            Err(Error::Reason(format!(
+                "variable is not declared: {symbol:?}"
+            )))
+        }
+    }
+
+    pub fn intern_var(&mut self, name: &str) -> SymbolId {
+        let symbol = self.variables.intern_symbol(name);
+        grow_table(&mut self.var_values, symbol.as_usize());
+        symbol
+    }
+
     /// TODO: Store argument arity information so it can be validated on compile or at runtime.
     pub fn bind_native_func(&mut self, name: &str, func: NativeFunc) -> Result<SymbolId> {
         match self.variables.insert_unique(name) {

@@ -18,7 +18,7 @@ pub fn init_core(env: &mut Env) -> Result<()> {
 // ----------------------------------------------------------------------------
 // Number
 
-fn number_add(_env: &Env, args: &[Expr]) -> Result<Expr> {
+fn number_add(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
     let mut sum: f64 = 0.0;
 
     for (index, arg) in args.iter().enumerate() {
@@ -35,7 +35,7 @@ fn number_add(_env: &Env, args: &[Expr]) -> Result<Expr> {
     Ok(Expr::Number(sum))
 }
 
-fn number_sub(_env: &Env, args: &[Expr]) -> Result<Expr> {
+fn number_sub(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
     let mut sum: f64 = 0.0;
 
     for (index, arg) in args.iter().enumerate() {
@@ -52,8 +52,8 @@ fn number_sub(_env: &Env, args: &[Expr]) -> Result<Expr> {
     Ok(Expr::Number(sum))
 }
 
-fn number_mul(_env: &Env, args: &[Expr]) -> Result<Expr> {
-    let mut sum: f64 = 0.0;
+fn number_mul(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
+    let mut sum: f64 = 1.0;
 
     for (index, arg) in args.iter().enumerate() {
         match arg {
@@ -72,7 +72,7 @@ fn number_mul(_env: &Env, args: &[Expr]) -> Result<Expr> {
 // ----------------------------------------------------------------------------
 // Boolean
 
-fn boolean_and(_env: &Env, args: &[Expr]) -> Result<Expr> {
+fn boolean_and(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
     // Default return value if procedure has no arguments.
     let mut expr = &Expr::Bool(true);
 
@@ -89,6 +89,6 @@ fn boolean_and(_env: &Env, args: &[Expr]) -> Result<Expr> {
     Ok(expr.clone())
 }
 
-fn boolean_or(_env: &Env, args: &[Expr]) -> Result<Expr> {
+fn boolean_or(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
     todo!()
 }

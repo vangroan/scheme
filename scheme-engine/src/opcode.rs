@@ -10,11 +10,20 @@ pub enum Op {
     PushFalse,
     PushConstant(ConstantId),
 
+    /// Remove and discard the top value off the stack.
+    Pop,
+
     /// Return from a procedure call.
     Return,
 
     /// Load the variable in the current environment onto the operand stack.
     LoadEnvVar(SymbolId),
+
+    /// Store the value on the top of stack into the current environment by
+    /// copying it into the variable with the given symbol.
+    ///
+    /// Does not implicitly pop the value oof the stack.
+    StoreEnvVar(SymbolId),
 
     /// Call the Scheme procedure stored in the current environment.
     CallEnvProc {

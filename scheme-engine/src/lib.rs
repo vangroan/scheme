@@ -17,6 +17,7 @@ mod vm;
 pub use self::compiler::compile;
 pub use self::core::init_core;
 pub use self::env::Env;
+pub use self::expr::Expr;
 pub use self::handle::Handle;
 pub use self::parser::parse;
 pub use self::vm::eval;

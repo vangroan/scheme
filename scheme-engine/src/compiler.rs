@@ -71,6 +71,10 @@ impl Compiler {
         println!("compiler::compile_expr({expr:?})");
 
         match expr {
+            // Nil literal
+            Expr::Nil => {
+                self.proc.emit_op(Op::PushNil);
+            }
             // Number literal
             Expr::Number(number) => {
                 let constant_id = self.add_constant(expr.clone());
@@ -78,7 +82,11 @@ impl Compiler {
             }
             // Boolean literal
             Expr::Bool(boolean) => {
-                let op = if *boolean { Op::PushTrue } else { Op::PushFalse };
+                let op = if *boolean {
+                    Op::PushTrue
+                } else {
+                    Op::PushFalse
+                };
                 self.proc.emit_op(op);
             }
             Expr::Ident(ident) => {
@@ -126,6 +134,11 @@ impl Compiler {
                 let rest = &list[1..];
                 println!("rest of arguments: {rest:?}");
 
+                // Attempt to compile the call as a special form.
+                if self.compile_fundamental(ident.as_str(), rest)? {
+                    return Ok(());
+                }
+
                 // TODO: Walk scope in reverse to find variable.
 
                 // Lookup procedure using the first atom of the sequence.
@@ -162,6 +175,73 @@ impl Compiler {
                 Ok(())
             }
             _ => Err(Error::Reason("operator is not a procedure".to_string())),
+        }
+    }
+
+    /// Attempt to compile the identifier as a fundamental form.
+    ///
+    /// These are special forms with unusual evaluation rules,
+    /// and can be expressed by inlined bytecode.
+    ///
+    /// # Return
+    ///
+    /// Returns `true` if the identifier is considered a fundamental form.
+    /// Returns `false` if the form cannot be identified, and no bytecode will have been emitted.
+    fn compile_fundamental(&mut self, ident: &str, rest: &[Expr]) -> Result<bool> {
+        // TODO: When the identifiers themselves are evaluated then a special error must be raised.
+        // > define
+        // error: fundamental name cannot be used as a variable.
+        match ident {
+            "define" => {
+                self.compile_define_form(rest)?;
+                Ok(true)
+            }
+            "lambda" => {
+                todo!("lambda special form")
+            }
+            _ => Ok(false),
+        }
+    }
+
+    /// Compile the `define` form.
+    ///
+    /// A fundamental form that defines a variable in the current environment.
+    ///
+    /// Defines can appear in two places, at the top level of a program
+    /// where they are called **top-level definitions** or at the beginning
+    /// of a body where they are called **internal definitions**. It is an
+    /// error to place a define anywhere else.
+    ///
+    /// Defines also have a second form that also defines a procedure.
+    ///
+    /// # Return
+    ///
+    /// Returns the [`SymbolId`] of the defined variable.
+    fn compile_define_form(&mut self, rest: &[Expr]) -> Result<SymbolId> {
+        // TODO: `define` expression may only appear in specific places.
+        match rest
+            .get(0)
+            .ok_or_else(|| Error::Reason("identifier expected".to_string()))?
+        {
+            Expr::Ident(var_name) => {
+                // Variables can be redefined
+                let symbol = self.env.borrow_mut().intern_var(var_name);
+
+                // Define body is an expression, but may be omitted.
+                // TODO: Do we need an undefined, unspecified or void value?
+                let body = rest.get(1).unwrap_or(&Expr::Nil);
+
+                // This expression leaves a value on the stack.
+                self.compile_expr(body)?;
+
+                self.proc.emit_op(Op::StoreEnvVar(symbol));
+                self.proc.emit_op(Op::Pop);
+                Ok(symbol)
+            }
+            Expr::List(_formals) => {
+                todo!("procedure definition")
+            }
+            _ => Err(Error::Reason("ill-formed special form".to_string())),
         }
     }
 
