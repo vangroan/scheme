@@ -11,6 +11,9 @@ fn run_repl() {
     let stdin = io::stdin();
     let mut count = 0;
 
+    // Console environment.
+    let env = scheme_engine::new_env().expect("failed creating new core environment");
+
     loop {
         count += 1;
         buf.clear();
@@ -20,7 +23,23 @@ fn run_repl() {
 
         match scheme_engine::parse(buf.as_str()) {
             Ok(expr) => {
-                println!("{:?}", expr);
+                println!("parse:\n\t{:#?}", expr);
+
+                match scheme_engine::compile(env.clone(), &expr) {
+                    Ok(closure) => {
+                        println!("bytecode:");
+                        for (index, op) in
+                            closure.borrow().procedure().bytecode().iter().enumerate()
+                        {
+                            println!("  {index:>6} : {op:?}");
+                        }
+
+                        // TODO: Run closure in VM
+                    }
+                    Err(err) => {
+                        eprintln!("error: {err}");
+                    }
+                }
             }
             Err(err) => {
                 eprintln!("error: {err}");

@@ -1,8 +1,11 @@
 use std::cell::RefCell;
-pub use std::cell::{Ref, RefMut};
 use std::fmt;
 use std::fmt::Formatter;
 use std::rc::Rc;
+
+// Re-exports
+pub use std::cell::{Ref, RefMut};
+pub use std::rc::Weak as RcWeak;
 
 /// A shared, mutable handle.
 pub struct Handle<T> {
@@ -28,6 +31,11 @@ impl<T> Handle<T> {
 
     pub fn ptr_eq(&self, other: &Handle<T>) -> bool {
         Rc::ptr_eq(&self.rc, &other.rc)
+    }
+
+    /// TODO: Weak newtype so users can omit `RefCell` from `Weak<RefCell<...>>`
+    pub fn downgrade(&self) -> RcWeak<RefCell<T>> {
+        Rc::downgrade(&self.rc)
     }
 }
 

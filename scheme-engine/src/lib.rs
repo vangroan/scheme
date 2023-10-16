@@ -2,7 +2,7 @@ mod compiler;
 mod core;
 mod cursor;
 mod env;
-mod error;
+pub mod error;
 mod eval;
 mod expr;
 mod handle;
@@ -13,12 +13,20 @@ mod span;
 mod symbol;
 mod token;
 
-pub use compiler::compile;
-pub use core::init_core;
-pub use env::Env;
-pub use parser::parse;
+pub use self::compiler::compile;
+pub use self::core::init_core;
+pub use self::env::Env;
+pub use self::handle::Handle;
+pub use self::parser::parse;
 
 pub mod prelude {}
+
+/// Create a new environment loaded with the core library.
+pub fn new_env() -> error::Result<Handle<Env>> {
+    let mut env = Env::new();
+    init_core(&mut env)?;
+    Ok(Handle::new(env))
+}
 
 /// Convenience macro for declaring type safe identifiers.
 ///
