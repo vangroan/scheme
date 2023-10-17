@@ -4,8 +4,23 @@ use crate::error::{Error, Result};
 use crate::expr::{Expr, NativeFunc};
 use crate::symbol::{SymbolId, SymbolTable};
 
-declare_id!(pub struct ConstantId(u16));
-declare_id!(pub struct LocalId(u8));
+declare_id!(
+    /// Constant value identifier.
+    pub struct ConstantId(u16)
+);
+
+declare_id!(
+    /// Local variable location identifier.
+    ///
+    /// This is the offset within the local scope, relative to the
+    /// call frame's starting position in the dynamic operand stack.
+    ///
+    /// Importantly not the static lexical scoping stack.
+    ///
+    /// Thus the absolute position of the local cannot be known, because its
+    /// location is determined during runtime.
+    pub struct LocalId(u8)
+);
 
 pub struct Env {
     /// Table of values which do not change during runtime.

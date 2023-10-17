@@ -1,10 +1,14 @@
-use crate::env::{ConstantId, Env};
+use std::rc::Rc;
+
+use smol_str::SmolStr;
+
+use crate::env::{ConstantId, Env, LocalId};
 use crate::error::{Error, Result};
 use crate::expr::{Closure, Expr, Proc};
 use crate::handle::Handle;
+use crate::limits::*;
 use crate::opcode::Op;
-use crate::symbol::{SymbolId, SymbolTable};
-use std::rc::Rc;
+use crate::symbol::SymbolId;
 
 /// Compiles the given top-level expression into bytecode.
 ///
@@ -14,14 +18,15 @@ pub fn compile(env: Handle<Env>, expr: &Expr) -> Result<Handle<Closure>> {
     // Create a new procedure to act as the top level execution context.
     let proc = ProcState::new();
 
-    // Compilation starts at the top level of a program.
-    let place = Place::TopLevel;
-
     let mut compiler = Compiler {
         env,
         proc,
         proc_stack: Vec::new(),
-        place,
+        // Compilation starts at the top level of a program.
+        scope: Scope::TopLevel,
+        depth: 0,
+        locals: Vec::new(),
+        stack_offset: 0,
     };
 
     compiler.compile_expr(expr)?;
@@ -51,11 +56,27 @@ struct Compiler {
     /// Stack of procedure scopes being compiled.
     proc_stack: Vec<ProcState>,
 
-    /// Keeps track of where in an expression, or sequence, the compiler
-    /// has drilled down into.
+    /// Keeps track of the scope context as the compiler drills down into expressions.
     ///
-    /// This is for the semantics required by special forms.
-    place: Place,
+    /// This is for the unusual semantics required by special forms.
+    ///
+    /// See [`Compiler::compile_special_form`] for special forms.
+    scope: Scope,
+
+    /// The current scope depth.
+    ///
+    /// Used to keep track of which lexical scope local variables are declared in.
+    depth: usize,
+
+    /// Stack to keep track of the lexical scoping of local (internal) variables.
+    locals: Vec<Local>,
+
+    /// The position (index) in the [`locals`] stack where the current scope's
+    /// local variables start.
+    ///
+    /// Any [`LocalId`] declared within the current scope will be relative to
+    /// this position.
+    stack_offset: usize,
 }
 
 impl Compiler {
@@ -75,6 +96,26 @@ impl Compiler {
         };
 
         Ok((env, proc))
+    }
+
+    /// Drill deeper into a lexical scope, storing the current scoping
+    /// depth and replacing it with the given scope.
+    ///
+    /// Once the closure returns, the original scope is restored.
+    fn scope<T, F>(&mut self, scope: Scope, block: F) -> Result<T>
+    where
+        F: FnOnce(&mut Compiler) -> Result<T>,
+    {
+        let old_scope = self.scope;
+        self.scope = scope;
+        self.depth += 1;
+
+        let result = block(self);
+
+        self.scope = old_scope;
+        self.depth -= 1;
+
+        result
     }
 
     /// Compile a sequence of expressions.
@@ -104,6 +145,10 @@ impl Compiler {
         Ok(())
     }
 
+    /// Compile a single expression.
+    ///
+    /// Returns the number of resulting values the expression's
+    /// evaluation would leave on the operand stack during runtime.
     fn compile_expr(&mut self, expr: &Expr) -> Result<()> {
         println!("compiler::compile_expr({expr:?})");
 
@@ -131,8 +176,7 @@ impl Compiler {
                 self.compile_access(ident.as_str())?;
             }
             Expr::List(list) => {
-                // The default s-expression form is a procedure call.
-                self.compile_call(list.as_slice())?;
+                self.compile_form(list.as_slice())?;
             }
             Expr::Sequence(_) => {
                 self.compile_sequence(expr)?;
@@ -149,7 +193,12 @@ impl Compiler {
     }
 
     /// Compile variable access.
-    fn compile_access(&mut self, name: &str) -> Result<Variable> {
+    ///
+    /// # Return
+    ///
+    /// Returns the symbol for the location where the variable is stored.
+    fn compile_access(&mut self, name: &str) -> Result<SymbolId> {
+        // TODO: Distinguish between env var (SymbolId) and local var (LocalId)
         let symbol = self
             .env
             .borrow()
@@ -159,7 +208,66 @@ impl Compiler {
         // VM: Load the variable from the environment onto the operand stack.
         self.proc.emit_op(Op::LoadEnvVar(symbol));
 
-        Ok(Variable { symbol })
+        Ok(symbol)
+    }
+
+    fn compile_form(&mut self, list: &[Expr]) -> Result<()> {
+        if self.compile_special_form(list)? {
+            Ok(())
+        } else {
+            // The default s-expression form is a procedure call.
+            self.compile_call(list)
+        }
+    }
+
+    /// Attempt to compile a special form.
+    ///
+    /// Special forms are expression that follow unusual evaluation rules.
+    ///
+    /// They are implemented as compiler intrinsics that generate inlined bytecode.
+    ///
+    /// # Return
+    ///
+    /// Returns `true` if the form is considered a special form.
+    /// Returns `false` if the form cannot be identified, with no bytecode emitted.
+    fn compile_special_form(&mut self, list: &[Expr]) -> Result<bool> {
+        // TODO: When the identifiers themselves are evaluated like variables then a special error must be raised.
+        // > define
+        // error: fundamental name cannot be used as a variable.
+
+        if let Some((Expr::Ident(operator), rest)) = list.split_first() {
+            match operator.as_str() {
+                "define" => {
+                    self.compile_define_form(rest)?;
+                    Ok(true)
+                }
+                "lambda" => {
+                    self.compile_lambda_form(rest)?;
+                    Ok(true)
+                }
+                "let" => {
+                    todo!("let form")
+                }
+                "let*" => {
+                    todo!("let* form")
+                }
+                "letrec" => {
+                    todo!("letrec form")
+                }
+                "fluid-let" => {
+                    todo!("fluid-let form")
+                }
+                "set!" => {
+                    todo!("set! form")
+                }
+                "quote" => {
+                    todo!("quote form")
+                }
+                _ => Ok(false),
+            }
+        } else {
+            Ok(false)
+        }
     }
 
     fn compile_call(&mut self, list: &[Expr]) -> Result<()> {
@@ -173,11 +281,6 @@ impl Compiler {
             Expr::Ident(ident) => {
                 let rest = &list[1..];
                 println!("rest of arguments: {rest:?}");
-
-                // Attempt to compile the call as a special form.
-                if self.compile_fundamental(ident.as_str(), rest)? {
-                    return Ok(());
-                }
 
                 // TODO: Walk scope in reverse to find variable.
 
@@ -218,41 +321,16 @@ impl Compiler {
         }
     }
 
-    /// Attempt to compile the identifier as a fundamental form.
+    /// Compile the `define` special form.
     ///
-    /// These are special forms with unusual evaluation rules,
-    /// and can be expressed by inlined bytecode.
+    /// A fundamental special form that defines a variable in the current environment.
     ///
-    /// # Return
-    ///
-    /// Returns `true` if the identifier is considered a fundamental form.
-    /// Returns `false` if the form cannot be identified, and no bytecode will have been emitted.
-    fn compile_fundamental(&mut self, ident: &str, rest: &[Expr]) -> Result<bool> {
-        // TODO: When the identifiers themselves are evaluated then a special error must be raised.
-        // > define
-        // error: fundamental name cannot be used as a variable.
-        match ident {
-            "define" => {
-                self.compile_define_form(rest)?;
-                Ok(true)
-            }
-            "lambda" => {
-                todo!("lambda special form")
-            }
-            _ => Ok(false),
-        }
-    }
-
-    /// Compile the `define` form.
-    ///
-    /// A fundamental form that defines a variable in the current environment.
-    ///
-    /// Defines can appear in two places, at the top level of a program
+    /// Definitions can appear in two places, at the top level of a program
     /// where they are called **top-level definitions** or at the beginning
     /// of a body where they are called **internal definitions**. It is an
     /// error to place a define anywhere else.
     ///
-    /// Defines also have a second form that also defines a procedure.
+    /// Definitions also have a second form that also defines a procedure.
     ///
     /// # Return
     ///
@@ -274,8 +352,19 @@ impl Compiler {
                 // This expression leaves a value on the stack.
                 self.compile_expr(body)?;
 
-                self.proc.emit_op(Op::StoreEnvVar(symbol));
-                self.proc.emit_op(Op::Pop);
+                match self.scope {
+                    Scope::TopLevel => {
+                        self.proc.emit_op(Op::StoreEnvVar(symbol));
+                    }
+                    Scope::BodyStart => {
+                        let _local_id = self.add_local(var_name.as_str())?;
+                    }
+                    Scope::BodyRest => {
+                        return Err(Error::Reason("ill-formed special form: define must appear at top-level or first in body".to_string()));
+                    }
+                }
+                // FIXME: StoreEnvVar does not pop, and we're leaving the pop to `compile_sequence`, but define is not suppose to return a value.
+
                 Ok(symbol)
             }
             Expr::List(_formals) => {
@@ -285,7 +374,73 @@ impl Compiler {
         }
     }
 
+    /// Compile the `lambda` special form.
+    fn compile_lambda_form(&mut self, rest: &[Expr]) -> Result<()> {
+        if let Some((formals, rest)) = rest.split_first() {
+            self.scope(Scope::BodyStart, |compiler| {
+                match formals {
+                    // If the formals are a single identifier, then that
+                    // identifier is the "rest" variadic parameter.
+                    //
+                    // The lambda is completely variadic and all arguments will be
+                    // passed as a list bound to this formal.
+                    Expr::Ident(_name) => {
+                        todo!()
+                    }
+                    // The formal parameter list is a list of identifiers
+                    // to which the call arguments will be bound.
+                    //
+                    // The lambda's arity is determined by the number of
+                    // identifiers in this list.
+                    //
+                    // The parameters may be followed by a dot(.) keyword, after
+                    // which the "rest" parameters will be bound as a list.
+                    Expr::List(list) => {
+                        // TODO: Dot (.) for "rest" variadic arguments.
+                        let _arity = list.len();
+
+                        for _param in list {}
+
+                        let rest = compiler.compile_body_start(rest)?;
+
+                        compiler.scope(Scope::BodyRest, |compiler| {
+                            // Definitions not allowed here
+                            compiler.compile_body(rest)
+                        })?;
+
+                        todo!()
+                    }
+                    _ => Err(Error::Reason("parameter must be an identifier".to_string())),
+                }
+            })
+        } else {
+            Err(Error::Reason("ill-formed special form".to_string()))
+        }
+    }
+
+    /// Compile the start of a body.
+    ///
+    /// This is where definitions are allowed.
+    ///
+    /// Returns the expressions that were not consumed, wherever the
+    /// definitions end and non-definitions begin. This can be passed
+    /// to [`Compiler::compile_body`].
+    fn compile_body_start<'a>(&mut self, expressions: &'a [Expr]) -> Result<&'a [Expr]> {
+        todo!()
+    }
+
+    /// Compile the body of a `define`, `lambda`, `let`, etc...
+    fn compile_body(&mut self, rest: &[Expr]) -> Result<()> {
+        // TODO: Definitions can appear as the first expressions in a body.
+        // TODO: As soon as non-definition is encountered, no further definition is accepted.
+        todo!()
+    }
+
     /// Add a constant value to the current environment.
+    ///
+    /// Returns the [`ConstantId`] identifying its location.
+    ///
+    /// Does not emit a load operation.
     fn add_constant(&mut self, value: Expr) -> ConstantId {
         match self.proc.constants.iter().position(|el| el == &value) {
             Some(index) => ConstantId::new(index as u16),
@@ -295,6 +450,56 @@ impl Compiler {
                 ConstantId::new(next_index as u16)
             }
         }
+    }
+
+    /// Add a local variable to the the current scope.
+    ///
+    /// Local variables defined in a scope will shadow variables
+    /// with the same name defined in outer scopes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the current scope is the top-level.
+    /// Locals are only for bodies.
+    ///
+    /// Returns an error if a local with the given name already exists
+    /// in the current scope.
+    ///
+    /// # Returns
+    ///
+    /// A new [`LocalId`] identifying the local variable's location,
+    /// relative to the start of the call frame during runtime.
+    fn add_local(&mut self, name: &str) -> Result<LocalId> {
+        // Resolve local by scanning the lexical stack backwards.
+        for local in self.locals.iter().rev() {
+            if local.depth != self.depth {
+                // We've left our scope and stop the scan.
+                // Any locals with the same name will now be shadowed.
+                break;
+            }
+
+            if name == local.name {
+                return Err(Error::Reason(format!(
+                    "duplicate definition of local variable \"{name}\""
+                )));
+            }
+        }
+
+        let index = self.locals.len() - self.stack_offset;
+
+        if index >= MAX_LOCALS {
+            return Err(Error::Reason(format!(
+                "number of local variables in scope exceeds maximum of {MAX_LOCALS}"
+            )));
+        }
+
+        let local_id = LocalId::new(index as u8);
+        self.locals.push(Local {
+            id: local_id,
+            name: SmolStr::from(name),
+            depth: self.depth,
+        });
+        Ok(local_id)
     }
 }
 
@@ -321,17 +526,29 @@ impl ProcState {
 
 #[derive(Debug)]
 struct Variable {
+    /// The symbol identifying the location where the variable is stored int he current environment.
     symbol: SymbolId,
+    /// Indicates which scope the variable was defined in.
+    scope: Scope,
+}
+
+/// Slot for a local variable on the lexical stack.
+#[derive(Debug, Clone)]
+struct Local {
+    id: LocalId,
+    name: SmolStr,
+    /// The depth of the scope where the variable was declared.
+    depth: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Place {
+enum Scope {
     TopLevel,
     BodyStart,
     BodyRest,
 }
 
-impl Place {
+impl Scope {
     fn is_top_level(&self) -> bool {
         matches!(self, Self::TopLevel)
     }

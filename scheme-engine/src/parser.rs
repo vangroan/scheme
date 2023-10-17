@@ -103,7 +103,7 @@ fn parse_atom(token: Token, fragment: &str) -> Result<Expr> {
             Some('x') => todo!("parse hexadecimal number"),
             _ => todo!("unexpected character"),
         },
-        '+' | '-' | '*' | 'a'..='z' => {
+        '+' | '-' | '*' | '=' | 'a'..='z' => {
             // TODO: The complex identifier rules
             parse_identifier(token, fragment)
         }

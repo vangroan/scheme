@@ -6,6 +6,7 @@ pub mod error;
 mod expr;
 mod handle;
 mod lexer;
+mod limits;
 mod opcode;
 mod parser;
 mod span;

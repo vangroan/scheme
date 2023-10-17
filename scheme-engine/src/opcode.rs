@@ -1,4 +1,4 @@
-use crate::env::ConstantId;
+use crate::env::{ConstantId, LocalId};
 use crate::symbol::SymbolId;
 
 #[derive(Debug, Clone)]
@@ -19,11 +19,17 @@ pub enum Op {
     /// Load the variable in the current environment onto the operand stack.
     LoadEnvVar(SymbolId),
 
-    /// Store the value on the top of stack into the current environment by
+    /// Store the value on the top of operand stack into the current environment by
     /// copying it into the variable with the given symbol.
     ///
-    /// Does not implicitly pop the value oof the stack.
+    /// Does not implicitly pop the value off the stack.
     StoreEnvVar(SymbolId),
+
+    /// Store the value on the top of the operand stack into the local
+    /// variable at the given location.
+    ///
+    /// Does not implicitly pop the value off the stack.
+    StoreLocalVar(LocalId),
 
     /// Call the Scheme procedure stored in the current environment.
     CallEnvProc {

@@ -1,7 +1,7 @@
 //! Virtual machine.
 
 use crate::error::{Error, Result};
-use crate::expr::{Closure, Expr, Proc};
+use crate::expr::{Closure, Expr};
 use crate::handle::Handle;
 use crate::opcode::Op;
 use std::rc::Rc;
@@ -122,6 +122,12 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
             Op::StoreEnvVar(symbol) => {
                 let value = vm.operand.last().cloned().unwrap_or(Expr::Nil);
                 env.set_var(symbol, value)?;
+                // don't pop
+            }
+            Op::StoreLocalVar(local_id) => {
+                let value = vm.operand.last().cloned().unwrap_or(Expr::Nil);
+                vm.operand[frame.stack_offset + local_id.as_usize()] = value;
+                // don't pop
             }
             Op::PushConstant(constant_id) => {
                 let value = proc
