@@ -3,7 +3,7 @@ use scheme_engine::{Env, Handle};
 
 #[test]
 fn test_add() {
-    let expr = scheme_engine::parse(include_str!("test_number.scm")).expect("parse failed");
+    let expr = scheme_engine::parse(include_str!("test_number.scm"), true).expect("parse failed");
 
     let mut env = Handle::new(Env::new());
     scheme_engine::init_core(&mut env.borrow_mut()).expect("init core");

@@ -21,7 +21,7 @@ fn run_repl() {
         let _ = io::stdout().flush();
         stdin.read_line(&mut buf).expect("read stdin");
 
-        match scheme_engine::parse(buf.as_str()) {
+        match scheme_engine::parse(buf.as_str(), true) {
             Ok(expr) => {
                 println!("parse:\n\t{:#?}", expr);
 

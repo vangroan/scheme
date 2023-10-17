@@ -7,13 +7,35 @@ use crate::{
     token::{Token, TokenKind},
 };
 
-pub fn parse(source: &str) -> Result<Expr> {
+pub fn parse(source: &str, is_sequence: bool) -> Result<Expr> {
     let mut lexer = Lexer::new(source);
 
     // Position the lexer so the current token points to the first token.
     lexer.next_token();
 
-    parse_expr(&mut lexer)
+    if is_sequence {
+        // Top level of file contents
+        parse_sequence(&mut lexer)
+    } else {
+        parse_expr(&mut lexer)
+    }
+}
+
+fn parse_sequence(lexer: &mut Lexer) -> Result<Expr> {
+    println!("parse_sequence({:?})", lexer.rest());
+
+    let mut expressions = Vec::new();
+
+    while let Some(token) = lexer.current_token() {
+        if token.kind == TokenKind::EOF {
+            break;
+        }
+
+        let expr = parse_expr(lexer)?;
+        expressions.push(expr);
+    }
+
+    Ok(Expr::Sequence(expressions))
 }
 
 fn parse_expr(lexer: &mut Lexer) -> Result<Expr> {
@@ -26,7 +48,8 @@ fn parse_expr(lexer: &mut Lexer) -> Result<Expr> {
     lexer.next_token();
 
     match token.kind {
-        TokenKind::LeftParen => parse_sequence(lexer),
+        TokenKind::LeftParen => parse_list(lexer),
+        TokenKind::EOF => Err(Error::Reason("unexpected end-of-file".to_string())),
         TokenKind::RightParen => Err(Error::Reason("unexpected right parentheses".to_string())),
         TokenKind::QuoteMark => parse_expr(lexer).map(Box::new).map(Expr::Quote),
         _ => {
@@ -36,22 +59,28 @@ fn parse_expr(lexer: &mut Lexer) -> Result<Expr> {
     }
 }
 
-fn parse_sequence(lexer: &mut Lexer) -> Result<Expr> {
-    println!("parse_sequence({:?})", lexer.rest());
+fn parse_list(lexer: &mut Lexer) -> Result<Expr> {
+    println!("parse_list({:?})", lexer.rest());
 
-    let mut exprs = Vec::new();
+    let mut expressions = Vec::new();
 
     while let Some(token) = lexer.current_token() {
-        if token.kind == TokenKind::RightParen {
-            lexer.next_token();
-            break;
+        match token.kind {
+            TokenKind::RightParen => {
+                lexer.next_token();
+                break;
+            }
+            TokenKind::EOF => {
+                return Err(Error::Reason("unexpected end-of-file".to_string()));
+            }
+            _ => {
+                let expr = parse_expr(lexer)?;
+                expressions.push(expr);
+            }
         }
-
-        let expr = parse_expr(lexer)?;
-        exprs.push(expr);
     }
 
-    Ok(Expr::List(exprs))
+    Ok(Expr::List(expressions))
 }
 
 fn parse_atom(token: Token, fragment: &str) -> Result<Expr> {
@@ -101,21 +130,21 @@ mod test {
 
     #[test]
     fn test_numbers() {
-        let expr = parse("(1 2 (3 4) (5 (6 7 8)))").expect("parse failed");
+        let expr = parse("(1 2 (3 4) (5 (6 7 8)))", false).expect("parse failed");
         println!("{:#?}", expr);
 
-        let list1 = expr.as_list().unwrap();
+        let list1 = expr.as_slice().unwrap();
         assert_eq!(list1[0], Expr::Number(1.0));
         assert_eq!(list1[1], Expr::Number(2.0));
 
-        let list2 = list1[2].as_list().unwrap();
+        let list2 = list1[2].as_slice().unwrap();
         assert_eq!(list2[0], Expr::Number(3.0));
         assert_eq!(list2[1], Expr::Number(4.0));
 
-        let list3 = list1[3].as_list().unwrap();
+        let list3 = list1[3].as_slice().unwrap();
         assert_eq!(list3[0], Expr::Number(5.0));
 
-        let list4 = list3[1].as_list().unwrap();
+        let list4 = list3[1].as_slice().unwrap();
         assert_eq!(list4[0], Expr::Number(6.0));
         assert_eq!(list4[1], Expr::Number(7.0));
         assert_eq!(list4[2], Expr::Number(8.0));
@@ -123,10 +152,23 @@ mod test {
 
     #[test]
     fn test_boolean() {
-        let expr = parse("(#t #f)").expect("parse failed");
+        let expr = parse("(#t #f)", false).expect("parse failed");
+        assert!(matches!(expr, Expr::List(_)));
 
-        let list = expr.as_list().unwrap();
+        let list = expr.as_slice().unwrap();
         assert_eq!(list[0], Expr::Bool(true));
         assert_eq!(list[1], Expr::Bool(false));
+    }
+
+    #[test]
+    fn test_sequence() {
+        let source = r#"
+        (one 1)
+        (two 2)
+        (three 3)
+        "#;
+
+        let expr = parse(source, true).expect("parse failed");
+        assert!(matches!(expr, Expr::Sequence(_)));
     }
 }

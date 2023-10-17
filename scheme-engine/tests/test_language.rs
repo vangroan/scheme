@@ -1,11 +1,25 @@
-use scheme_engine::Expr;
+use scheme_engine::{error::Error, Closure, Env, Expr, Handle};
+
+fn compile_closure_env(source: &str) -> Result<(Handle<Env>, Handle<Closure>), Error> {
+    let env = scheme_engine::new_env()?;
+    let expr = scheme_engine::parse(include_str!("language/define.scm"), true)?;
+    let closure = scheme_engine::compile(env.clone(), &expr)?;
+    Ok((env, closure))
+}
+
+#[test]
+fn test_numbers() {
+    let (env, closure) = compile_closure_env(include_str!("language/number.scm"))
+        .expect("compiling closure and environment");
+    let value = scheme_engine::eval(closure).expect("evaluation");
+    println!("Result value: {:?}", value);
+}
 
 #[test]
 fn test_define() {
-    let env = scheme_engine::new_env().unwrap();
-    let expr = scheme_engine::parse(include_str!("language/define.scm")).unwrap();
-    let closure = scheme_engine::compile(env.clone(), &expr).unwrap();
-    scheme_engine::eval(closure).unwrap();
+    let (env, closure) = compile_closure_env(include_str!("language/define.scm"))
+        .expect("compiling closure and environment");
+    let _ = scheme_engine::eval(closure).expect("evaluation");
 
     let symbol_x = env.borrow().resolve_var("x").unwrap();
     let x = env.borrow().get_var(symbol_x).cloned().unwrap();

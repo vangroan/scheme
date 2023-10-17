@@ -6,7 +6,7 @@ use crate::opcode::Op;
 use crate::symbol::{SymbolId, SymbolTable};
 use std::rc::Rc;
 
-/// Compiles the given expression into bytecode.
+/// Compiles the given top-level expression into bytecode.
 ///
 /// The given environment will be used as the environment
 /// of the created procedure.
@@ -14,10 +14,14 @@ pub fn compile(env: Handle<Env>, expr: &Expr) -> Result<Handle<Closure>> {
     // Create a new procedure to act as the top level execution context.
     let proc = ProcState::new();
 
+    // Compilation starts at the top level of a program.
+    let place = Place::TopLevel;
+
     let mut compiler = Compiler {
         env,
         proc,
         proc_stack: Vec::new(),
+        place,
     };
 
     compiler.compile_expr(expr)?;
@@ -46,6 +50,12 @@ struct Compiler {
 
     /// Stack of procedure scopes being compiled.
     proc_stack: Vec<ProcState>,
+
+    /// Keeps track of where in an expression, or sequence, the compiler
+    /// has drilled down into.
+    ///
+    /// This is for the semantics required by special forms.
+    place: Place,
 }
 
 impl Compiler {
@@ -65,6 +75,33 @@ impl Compiler {
         };
 
         Ok((env, proc))
+    }
+
+    /// Compile a sequence of expressions.
+    ///
+    /// The given expression in the `expr` argument must be a list.
+    ///
+    /// Only the result of the final expression is left
+    /// on the operand stack during evaluation.
+    fn compile_sequence(&mut self, expr: &Expr) -> Result<()> {
+        if !matches!(expr, Expr::Sequence(_)) {
+            return Err(Error::Reason("expected a sequence or nil".to_string()));
+        }
+
+        let expressions = expr.as_slice().unwrap();
+
+        if let Some((last, preceding)) = expressions.split_last() {
+            for expr in preceding {
+                self.compile_expr(expr)?;
+
+                // Discard the result values of the preceding expressions.
+                self.proc.emit_op(Op::Pop);
+            }
+
+            self.compile_expr(last)?;
+        }
+
+        Ok(())
     }
 
     fn compile_expr(&mut self, expr: &Expr) -> Result<()> {
@@ -96,6 +133,9 @@ impl Compiler {
             Expr::List(list) => {
                 // The default s-expression form is a procedure call.
                 self.compile_call(list.as_slice())?;
+            }
+            Expr::Sequence(_) => {
+                self.compile_sequence(expr)?;
             }
             _ => todo!("compile_expr: {expr:?}"),
         }
@@ -282,4 +322,25 @@ impl ProcState {
 #[derive(Debug)]
 struct Variable {
     symbol: SymbolId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Place {
+    TopLevel,
+    BodyStart,
+    BodyRest,
+}
+
+impl Place {
+    fn is_top_level(&self) -> bool {
+        matches!(self, Self::TopLevel)
+    }
+
+    fn is_body_start(&self) -> bool {
+        matches!(self, Self::BodyStart)
+    }
+
+    fn is_body_rest(&self) -> bool {
+        matches!(self, Self::BodyRest)
+    }
 }
