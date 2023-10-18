@@ -127,6 +127,14 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
                 env.set_var(symbol, value)?;
                 // don't pop
             }
+            Op::LoadLocalVar(local_id) => {
+                let value = vm
+                    .operand
+                    .get(local_id.as_usize())
+                    .cloned()
+                    .unwrap_or(Expr::Nil);
+                vm.operand.push(value);
+            }
             Op::StoreLocalVar(local_id) => {
                 let value = vm.operand.last().cloned().unwrap_or(Expr::Nil);
                 vm.operand[frame.stack_offset + local_id.as_usize()] = value;
@@ -142,6 +150,9 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
             }
             Op::Pop => {
                 let _ = vm.operand.pop();
+            }
+            Op::CreateClosure(constant_id) => {
+                todo!()
             }
             Op::CallEnvProc { arity } => todo!("call procedure"),
 

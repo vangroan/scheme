@@ -1,10 +1,11 @@
+use std::mem;
 use std::rc::Rc;
 
 use smol_str::SmolStr;
 
 use crate::env::{ConstantId, Env, LocalId};
 use crate::error::{Error, Result};
-use crate::expr::{Closure, Expr, Proc};
+use crate::expr::{Closure, Expr, Keyword, Proc};
 use crate::handle::Handle;
 use crate::limits::*;
 use crate::opcode::Op;
@@ -23,7 +24,7 @@ pub fn compile(env: Handle<Env>, expr: &Expr) -> Result<Handle<Closure>> {
         proc,
         proc_stack: Vec::new(),
         // Compilation starts at the top level of a program.
-        scope: Scope::TopLevel,
+        context: Context::TopLevel,
         depth: 0,
         locals: Vec::new(),
         stack_offset: 0,
@@ -61,7 +62,7 @@ struct Compiler {
     /// This is for the unusual semantics required by special forms.
     ///
     /// See [`Compiler::compile_special_form`] for special forms.
-    scope: Scope,
+    context: Context,
 
     /// The current scope depth.
     ///
@@ -80,6 +81,7 @@ struct Compiler {
 }
 
 impl Compiler {
+    /// Consume the compiler and take the last procedure as the top-level program.
     fn take_procedure(self) -> Result<(Handle<Env>, Proc)> {
         let Self { env, proc, .. } = self;
 
@@ -89,6 +91,7 @@ impl Compiler {
             code: proc.code.into_boxed_slice(),
             // The top level procedures never take arguments.
             arity: 0,
+            variadic: false,
             constants: proc.constants.into_boxed_slice(),
             // By storing the procedure in the environment
             // we've created a circular reference.
@@ -98,24 +101,52 @@ impl Compiler {
         Ok((env, proc))
     }
 
-    /// Drill deeper into a lexical scope, storing the current scoping
-    /// depth and replacing it with the given scope.
-    ///
-    /// Once the closure returns, the original scope is restored.
-    fn scope<T, F>(&mut self, scope: Scope, block: F) -> Result<T>
+    /// Set the current scope context for the duration of the given closure.
+    fn context<T, F>(&mut self, ctx: Context, block: F) -> Result<T>
     where
         F: FnOnce(&mut Compiler) -> Result<T>,
     {
-        let old_scope = self.scope;
-        self.scope = scope;
-        self.depth += 1;
-
+        let old_context = self.context;
+        self.context = ctx;
         let result = block(self);
+        self.context = old_context;
 
-        self.scope = old_scope;
+        result
+    }
+
+    /// Create a new lexical scope, storing the current scoping
+    /// depth and replacing it with the given scope.
+    ///
+    /// Local variables will be declared in the new scope, shadowing
+    /// outer ones. Accessing outer variables will create up-values.
+    ///
+    /// Once the closure returns, the original scope is restored.
+    ///
+    /// # Returns
+    ///
+    /// Returns the value returned from the closure, as well as
+    /// the newly compiled procedure.
+    fn scope<T, F>(&mut self, block: F) -> Result<T>
+    where
+        F: FnOnce(&mut Compiler) -> Result<T>,
+    {
+        self.depth += 1;
+        let result = block(self);
         self.depth -= 1;
 
         result
+    }
+
+    /// Create a new procedure and a lexical scope to encapsulate it.
+    fn proc_scope<T, F>(&mut self, block: F) -> Result<(T, ProcState)>
+    where
+        F: FnOnce(&mut Compiler) -> Result<T>,
+    {
+        let prev_proc = mem::replace(&mut self.proc, ProcState::new());
+        let result = self.scope(|compiler| Ok(block(compiler)))?;
+        let new_proc = mem::replace(&mut self.proc, prev_proc);
+
+        result.map(|r| (r, new_proc))
     }
 
     /// Compile a sequence of expressions.
@@ -197,8 +228,23 @@ impl Compiler {
     /// # Return
     ///
     /// Returns the symbol for the location where the variable is stored.
-    fn compile_access(&mut self, name: &str) -> Result<SymbolId> {
-        // TODO: Distinguish between env var (SymbolId) and local var (LocalId)
+    fn compile_access(&mut self, name: &str) -> Result<Variable> {
+        // First attempt to resolve the variable in a local scope,
+        // an outer scope, then the enclosing environment.
+        for local in self.locals.iter().rev() {
+            if name == local.name {
+                if self.depth != local.depth {
+                    todo!("up-values for locals outside of the current scope");
+                }
+
+                self.proc.emit_op(Op::LoadLocalVar(local.id));
+
+                return Ok(Variable::Local(local.id));
+            }
+        }
+
+        // If the variable cannot be found in the locals of the lexical scopes,
+        // then we fall back onto the enclosing environment.
         let symbol = self
             .env
             .borrow()
@@ -208,7 +254,7 @@ impl Compiler {
         // VM: Load the variable from the environment onto the operand stack.
         self.proc.emit_op(Op::LoadEnvVar(symbol));
 
-        Ok(symbol)
+        Ok(Variable::Symbol(symbol))
     }
 
     fn compile_form(&mut self, list: &[Expr]) -> Result<()> {
@@ -352,8 +398,8 @@ impl Compiler {
                 // This expression leaves a value on the stack.
                 self.compile_expr(body)?;
 
-                match self.scope {
-                    Scope::TopLevel => {
+                match self.context {
+                    Context::TopLevel => {
                         self.proc.emit_op(Op::StoreEnvVar(symbol));
                         self.proc.emit_op(Op::Pop);
 
@@ -363,10 +409,11 @@ impl Compiler {
                         // is allowed to clean this void off the stack.
                         self.proc.emit_op(Op::PushVoid);
                     }
-                    Scope::BodyStart => {
-                        let _local_id = self.add_local(var_name.as_str())?;
+                    Context::BodyStart => {
+                        let local_id = self.declare_local(var_name.as_str())?;
+                        self.proc.emit_op(Op::StoreLocalVar(local_id));
                     }
-                    Scope::BodyRest => {
+                    Context::BodyRest => {
                         return Err(Error::Reason("ill-formed special form: define must appear at top-level or first in body".to_string()));
                     }
                 }
@@ -382,9 +429,15 @@ impl Compiler {
     }
 
     /// Compile the `lambda` special form.
+    ///
+    /// ```scheme
+    /// (lambda <formal> <body>)
+    /// (lambda (<formals>) <body>)
+    /// (lambda (<formals> . <rest>) <body>)
+    /// ```
     fn compile_lambda_form(&mut self, rest: &[Expr]) -> Result<()> {
         if let Some((formals, rest)) = rest.split_first() {
-            self.scope(Scope::BodyStart, |compiler| {
+            let (_, proc_state) = self.proc_scope(|compiler| {
                 match formals {
                     // If the formals are a single identifier, then that
                     // identifier is the "rest" variadic parameter.
@@ -403,44 +456,112 @@ impl Compiler {
                     // The parameters may be followed by a dot(.) keyword, after
                     // which the "rest" parameters will be bound as a list.
                     Expr::List(list) => {
-                        // TODO: Dot (.) for "rest" variadic arguments.
-                        let _arity = list.len();
+                        compiler.proc.arity = 0;
+                        let mut variadic: bool = false;
 
-                        for _param in list {}
+                        for param in list {
+                            match param {
+                                Expr::Ident(name) => {
+                                    // Declare bindings in this scope so the
+                                    // arguments can be referenced by name
+                                    // in the lambda body.
+                                    compiler.declare_local(name.as_str())?;
 
-                        let rest = compiler.compile_body_start(rest)?;
+                                    if variadic {
+                                        break;
+                                    } else {
+                                        compiler.proc.arity += 1;
+                                    }
+                                }
+                                Expr::Keyword(Keyword::Dot) => {
+                                    // When we encounter a dot(.) the succeeding parameter
+                                    // is the binding to the variadic list.
+                                    variadic = true;
+                                }
+                                _ => {
+                                    return Err(Error::Reason(
+                                        "parameter must be an identifier".to_string(),
+                                    ))
+                                }
+                            }
+                        }
 
-                        compiler.scope(Scope::BodyRest, |compiler| {
-                            // Definitions not allowed here
-                            compiler.compile_body(rest)
-                        })?;
+                        compiler.compile_body(rest)?;
 
-                        todo!()
+                        Ok(())
                     }
                     _ => Err(Error::Reason("parameter must be an identifier".to_string())),
                 }
-            })
-        } else {
-            Err(Error::Reason("ill-formed special form".to_string()))
-        }
-    }
+            })?;
 
-    /// Compile the start of a body.
-    ///
-    /// This is where definitions are allowed.
-    ///
-    /// Returns the expressions that were not consumed, wherever the
-    /// definitions end and non-definitions begin. This can be passed
-    /// to [`Compiler::compile_body`].
-    fn compile_body_start<'a>(&mut self, expressions: &'a [Expr]) -> Result<&'a [Expr]> {
-        todo!()
+            println!("procedure compiled:");
+            for (index, op) in proc_state.code.iter().enumerate() {
+                println!("  {index:>6} : {op:?}");
+            }
+
+            let proc = proc_state.into_proc(self.env.clone());
+
+            /// The procedure definition is stored as a constant in the outer environment.
+            let constant_id = self.add_constant(Expr::Procedure(Rc::new(proc)));
+            self.proc.emit_op(Op::CreateClosure(constant_id));
+
+            Ok(())
+        } else {
+            Err(Error::Reason(
+                "ill-formed special form: lambda expects formal parameters followed by a body"
+                    .to_string(),
+            ))
+        }
     }
 
     /// Compile the body of a `define`, `lambda`, `let`, etc...
     fn compile_body(&mut self, rest: &[Expr]) -> Result<()> {
-        // TODO: Definitions can appear as the first expressions in a body.
-        // TODO: As soon as non-definition is encountered, no further definition is accepted.
-        todo!()
+        self.context(Context::BodyStart, |compiler| {
+            // Compile the start of a body.
+            //
+            // This is where definitions are allowed. We keep compiling until a
+            // non-definition expression is encountered.
+            let mut body_expressions = rest;
+
+            for expr in rest {
+                if let Expr::List(list) = expr {
+                    if let Some((Expr::Ident(name), def_rest)) = list.split_first() {
+                        match name.as_str() {
+                            "define" => {
+                                compiler.compile_define_form(def_rest)?;
+                                body_expressions = &rest[1..];
+                            }
+                            "define-syntax" => {
+                                todo!("define-syntax")
+                            }
+                            _ => break,
+                        }
+                    }
+                } else {
+                    break;
+                }
+            }
+
+            compiler.context(Context::BodyRest, |compiler| {
+                // No further definitions not allowed here.
+
+                if let Some((last, preceding)) = body_expressions.split_last() {
+                    for expr in preceding {
+                        compiler.compile_expr(expr)?;
+
+                        // Discard the result values of the preceding expressions.
+                        compiler.proc.emit_op(Op::Pop);
+                    }
+
+                    // Only the last expression's result is left on the stack.
+                    compiler.compile_expr(last)?;
+                }
+
+                Ok(())
+            })?;
+
+            Ok(())
+        })
     }
 
     /// Add a constant value to the current environment.
@@ -476,7 +597,7 @@ impl Compiler {
     ///
     /// A new [`LocalId`] identifying the local variable's location,
     /// relative to the start of the call frame during runtime.
-    fn add_local(&mut self, name: &str) -> Result<LocalId> {
+    fn declare_local(&mut self, name: &str) -> Result<LocalId> {
         // Resolve local by scanning the lexical stack backwards.
         for local in self.locals.iter().rev() {
             if local.depth != self.depth {
@@ -514,7 +635,8 @@ impl Compiler {
 struct ProcState {
     /// Generated result bytecode.
     code: Vec<Op>,
-
+    arity: usize,
+    variadic: bool,
     constants: Vec<Expr>,
 }
 
@@ -522,6 +644,8 @@ impl ProcState {
     fn new() -> Self {
         Self {
             code: Vec::new(),
+            arity: 0,
+            variadic: false,
             constants: Vec::new(),
         }
     }
@@ -529,14 +653,30 @@ impl ProcState {
     fn emit_op(&mut self, op: Op) {
         self.code.push(op)
     }
+
+    fn into_proc(self, env: Handle<Env>) -> Proc {
+        let Self {
+            code,
+            arity,
+            variadic,
+            constants,
+        } = self;
+
+        Proc {
+            code: code.into_boxed_slice(),
+            arity,
+            variadic,
+            constants: constants.into_boxed_slice(),
+            env: env.downgrade(),
+        }
+    }
 }
 
 #[derive(Debug)]
-struct Variable {
+enum Variable {
+    Local(LocalId),
     /// The symbol identifying the location where the variable is stored int he current environment.
-    symbol: SymbolId,
-    /// Indicates which scope the variable was defined in.
-    scope: Scope,
+    Symbol(SymbolId),
 }
 
 /// Slot for a local variable on the lexical stack.
@@ -549,13 +689,13 @@ struct Local {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Scope {
+enum Context {
     TopLevel,
     BodyStart,
     BodyRest,
 }
 
-impl Scope {
+impl Context {
     fn is_top_level(&self) -> bool {
         matches!(self, Self::TopLevel)
     }

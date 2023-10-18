@@ -27,11 +27,19 @@ pub enum Op {
     /// Does not implicitly pop the value off the stack.
     StoreEnvVar(SymbolId),
 
+    LoadLocalVar(LocalId),
+
     /// Store the value on the top of the operand stack into the local
     /// variable at the given location.
     ///
     /// Does not implicitly pop the value off the stack.
     StoreLocalVar(LocalId),
+
+    /// Instantiate a new closure object.
+    ///
+    /// The constant ID argument is the location of the procedure definition
+    /// that this closure instantiates.
+    CreateClosure(ConstantId),
 
     /// Call the Scheme procedure stored in the current environment.
     CallEnvProc {
