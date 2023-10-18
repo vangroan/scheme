@@ -1,6 +1,6 @@
 use std::io::{self, Write};
 
-use scheme_engine;
+use scheme_engine::{self, Expr};
 
 fn main() {
     run_repl()
@@ -36,6 +36,9 @@ fn run_repl() {
 
                         // Run closure in VM
                         match scheme_engine::eval(closure) {
+                            Ok(Expr::Void) => {
+                                // Don't print a #!void, it's the "nothing" value
+                            }
                             Ok(value) => {
                                 println!("{:?}", value);
                             }

@@ -6,12 +6,16 @@ use crate::expr::Expr;
 
 pub fn init_core(env: &mut Env) -> Result<()> {
     env.bind_native_func("assert", ext_assert)?;
+    env.bind_native_func("display", display)?;
+    env.bind_native_func("newline", newline)?;
 
+    env.bind_native_func("number?", number_is_number)?;
     env.bind_native_func("+", number_add)?;
     env.bind_native_func("-", number_sub)?;
     env.bind_native_func("*", number_mul)?;
+    env.bind_native_func("=", number_eq)?;
 
-    env.bind_native_func("=", boolean_eq)?;
+    env.bind_native_func("boolean?", boolean_is_boolean)?;
     env.bind_native_func("not", boolean_not)?;
     env.bind_native_func("and", boolean_and)?;
     env.bind_native_func("or", boolean_or)?;
@@ -41,15 +45,42 @@ fn ext_assert(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
                 // TODO: to_string solution that's cogent with Scheme's specification.
                 Err(Error::Reason("invalid assertion message type".to_string()))
             }
-            None => Err(Error::Reason("assertion failed".to_string())),
+            None => Err(Error::Reason(format!("assertion failed: {expr:?}"))),
         }
     } else {
         Ok(expr.clone())
     }
 }
 
+fn display(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
+    // TODO: Proper external representation, and not Rust `Debug`
+    let arg0 = args.get(0).ok_or_else(|| {
+        Error::Reason("wrong number of arguments passed to procedure".to_string())
+    })?;
+
+    print!("{arg0:?}");
+
+    // TODO: Display evaluates to nothing, like define?
+    Ok(Expr::Void)
+}
+
+fn newline(_env: &mut Env, _args: &[Expr]) -> Result<Expr> {
+    // TODO: Output port argument
+    println!();
+
+    // TODO: Display evaluates to nothing, like define?
+    Ok(Expr::Void)
+}
+
 // ----------------------------------------------------------------------------
 // Number
+
+fn number_is_number(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
+    let arg0 = args.get(0).ok_or_else(|| {
+        Error::Reason("wrong number of arguments passed to procedure".to_string())
+    })?;
+    Ok(Expr::Bool(arg0.is_number()))
+}
 
 fn number_add(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
     let mut sum: f64 = 0.0;
@@ -116,23 +147,35 @@ fn number_mul(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
     Ok(Expr::Number(sum))
 }
 
-// ----------------------------------------------------------------------------
-// Boolean
-
-// FIXME: This should be `number_eq` and type check for numbers.
-fn boolean_eq(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
+// TODO: Does this short circuit, or always evaluate all arguments?
+fn number_eq(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
     for ab in args.windows(2) {
         match ab {
             [] | [_] => break,
-            [a, b, ..] => {
+            [Expr::Number(a), Expr::Number(b), ..] => {
                 if a != b {
                     return Ok(Expr::Bool(false));
                 }
+            }
+            [..] => {
+                return Err(Error::Reason(
+                    "expected argument to be a number".to_string(),
+                ));
             }
         }
     }
 
     Ok(Expr::Bool(true))
+}
+
+// ----------------------------------------------------------------------------
+// Boolean
+
+fn boolean_is_boolean(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
+    let arg0 = args.get(0).ok_or_else(|| {
+        Error::Reason("wrong number of arguments passed to procedure".to_string())
+    })?;
+    Ok(Expr::Bool(arg0.is_boolean()))
 }
 
 fn boolean_not(_env: &mut Env, args: &[Expr]) -> Result<Expr> {

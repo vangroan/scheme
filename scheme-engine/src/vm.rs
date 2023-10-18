@@ -107,6 +107,9 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
             Op::PushNil => {
                 vm.operand.push(Expr::Nil);
             }
+            Op::PushVoid => {
+                vm.operand.push(Expr::Void);
+            }
             Op::PushTrue => {
                 vm.operand.push(Expr::Bool(true));
             }

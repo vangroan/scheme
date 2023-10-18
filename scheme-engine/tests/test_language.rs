@@ -8,8 +8,16 @@ fn compile_closure_env(source: &str) -> Result<(Handle<Env>, Handle<Closure>), E
 }
 
 #[test]
+fn test_booleans() {
+    let (_env, closure) = compile_closure_env(include_str!("language/boolean.scm"))
+        .expect("compiling closure and environment");
+    let value = scheme_engine::eval(closure).expect("evaluation");
+    println!("Result value: {:?}", value);
+}
+
+#[test]
 fn test_numbers() {
-    let (env, closure) = compile_closure_env(include_str!("language/number.scm"))
+    let (_env, closure) = compile_closure_env(include_str!("language/number.scm"))
         .expect("compiling closure and environment");
     let value = scheme_engine::eval(closure).expect("evaluation");
     println!("Result value: {:?}", value);
@@ -23,5 +31,5 @@ fn test_define() {
 
     let symbol_x = env.borrow().resolve_var("x").unwrap();
     let x = env.borrow().get_var(symbol_x).cloned().unwrap();
-    assert_eq!(x, Expr::Number(3.0));
+    assert_eq!(x, Expr::Number(42.0));
 }

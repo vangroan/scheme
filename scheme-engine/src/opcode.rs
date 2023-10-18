@@ -5,6 +5,8 @@ use crate::symbol::SymbolId;
 pub enum Op {
     /// Push a new `nil` value onto the operand stack.
     PushNil,
+    /// Push a new `#!void` value onto the operand stack.
+    PushVoid,
 
     PushTrue,
     PushFalse,
