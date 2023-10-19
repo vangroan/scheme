@@ -323,6 +323,7 @@ impl Compiler {
             return Err(Error::Reason("ill-formed expression".to_string()));
         }
 
+        // TODO: compile first expr
         match &list[0] {
             Expr::Ident(ident) => {
                 let rest = &list[1..];
@@ -345,7 +346,9 @@ impl Compiler {
                 }
 
                 match value {
-                    Expr::Closure(_) => todo!("call closure"),
+                    Expr::Closure(_) => self.proc.emit_op(Op::CallClosure {
+                        arity: rest.len() as u8,
+                    }),
                     Expr::NativeFunc(_) => self.proc.emit_op(Op::CallNative {
                         arity: rest.len() as u8,
                     }),
@@ -358,12 +361,18 @@ impl Compiler {
                         // know how to call closures.
                         panic!("procedures cannot be called directly")
                     }
-                    _ => todo!("call type not supported yet"),
+                    _ => {
+                        println!("compile_call list: {list:?}");
+                        todo!("call type not supported yet")
+                    }
                 }
 
                 Ok(())
             }
-            _ => Err(Error::Reason("operator is not a procedure".to_string())),
+            _ => {
+                println!("compile_call list: {list:?}");
+                Err(Error::Reason("operator is not a procedure".to_string()))
+            }
         }
     }
 
@@ -487,6 +496,7 @@ impl Compiler {
                         }
 
                         compiler.compile_body(rest)?;
+                        compiler.proc.emit_op(Op::Return);
 
                         Ok(())
                     }

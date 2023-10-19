@@ -33,3 +33,10 @@ fn test_define() {
     let x = env.borrow().get_var(symbol_x).cloned().unwrap();
     assert_eq!(x, Expr::Number(42.0));
 }
+
+#[test]
+fn test_lambda() {
+    let (env, closure) = compile_closure_env(include_str!("language/lambda.scm"))
+        .expect("compiling closure and environment");
+    let _ = scheme_engine::eval(closure).expect("evaluation");
+}

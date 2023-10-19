@@ -41,8 +41,8 @@ pub enum Op {
     /// that this closure instantiates.
     CreateClosure(ConstantId),
 
-    /// Call the Scheme procedure stored in the current environment.
-    CallEnvProc {
+    /// Call a closure instance instance.
+    CallClosure {
         arity: u8,
     },
 

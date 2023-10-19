@@ -4,6 +4,7 @@ use crate::error::{Error, Result};
 use crate::expr::{Closure, Expr};
 use crate::handle::Handle;
 use crate::opcode::Op;
+use std::mem;
 use std::rc::Rc;
 
 pub fn eval(closure: Handle<Closure>) -> Result<Expr> {
@@ -31,7 +32,7 @@ struct CallFrame {
 /// loop to the outer control to change the context.
 enum ProcAction {
     /// Call a new closure and push it onto the top of the callstack.
-    Call,
+    Call(Handle<Closure>, usize),
     /// Call a new closure and replace the top of the callstack with it.
     TailCall,
     /// Return an expression result.
@@ -57,9 +58,13 @@ impl Vm {
             ));
         }
 
+        // For consistency with closure call convention, keep a handle
+        // to this closure on the stack.
+        self.operand.push(Expr::Closure(closure.clone()));
+
         self.frames.push(CallFrame {
             closure,
-            stack_offset: 0,
+            stack_offset: self.operand.len(),
         });
 
         run_interpreter(self)
@@ -76,12 +81,26 @@ fn run_interpreter(vm: &mut Vm) -> Result<Expr> {
         .pop()
         .expect("vm must have at least one call frame");
 
-    match run_instructions(vm, &mut frame)? {
-        ProcAction::Call => todo!("procedure call"),
-        ProcAction::TailCall => todo!("tail call"),
-        ProcAction::Return(value) => {
-            // NOTE: Keep the frame off the stack for an implicit pop.
-            return Ok(value);
+    loop {
+        match run_instructions(vm, &mut frame)? {
+            ProcAction::Call(closure, stack_offset) => {
+                let new_frame = CallFrame {
+                    closure,
+                    stack_offset,
+                };
+
+                let old_frame = mem::replace(&mut frame, new_frame);
+                vm.frames.push(old_frame);
+            }
+            ProcAction::TailCall => todo!("tail call"),
+            ProcAction::Return(value) => {
+                // NOTE: Keep the frame off the stack for an implicit pop.
+
+                // The closure that was called will be on the stack just below the arguments.
+                vm.operand.truncate(frame.stack_offset - 1);
+
+                return Ok(value);
+            }
         }
     }
 }
@@ -91,13 +110,16 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
     // Pull relevant state into flat local variables to reduce the
     // overhead of jumping pointers and bookkeeping of borrowing objects.
     let mut closure_rc = frame.closure.clone();
-    let closure_ref = closure_rc.borrow_mut();
-    let proc_rc = closure_ref.procedure().clone();
+    // let closure_ref = closure_rc.borrow_mut();
+    // let proc_rc = closure_ref.procedure().clone();
+    let proc_rc = closure_rc.borrow().procedure_rc().clone();
     let proc = &*proc_rc;
     let env_rc = proc.env.upgrade().unwrap();
     let env = &mut *env_rc.borrow_mut();
     let ops = proc.bytecode();
     let mut pc: usize = 0;
+
+    println!("eval stack: {:?}", vm.operand);
 
     loop {
         let op = ops[pc].clone();
@@ -117,7 +139,10 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
                 vm.operand.push(Expr::Bool(false));
             }
 
-            Op::Return => todo!("return"),
+            Op::Return => {
+                let value = vm.operand.pop().unwrap_or(Expr::Nil);
+                return Ok(ProcAction::Return(value));
+            }
             Op::LoadEnvVar(symbol) => {
                 let value = env.get_var(symbol).cloned().unwrap_or(Expr::Nil);
                 vm.operand.push(value);
@@ -130,7 +155,7 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
             Op::LoadLocalVar(local_id) => {
                 let value = vm
                     .operand
-                    .get(local_id.as_usize())
+                    .get(frame.stack_offset + local_id.as_usize())
                     .cloned()
                     .unwrap_or(Expr::Nil);
                 vm.operand.push(value);
@@ -141,6 +166,7 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
                 // don't pop
             }
             Op::PushConstant(constant_id) => {
+                println!("push constant {constant_id:?}");
                 let value = proc
                     .constants
                     .get(constant_id.as_usize())
@@ -152,9 +178,40 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
                 let _ = vm.operand.pop();
             }
             Op::CreateClosure(constant_id) => {
-                todo!()
+                // The constant stores the procedure definition to instantiate.
+                let value = proc
+                    .constants
+                    .get(constant_id.as_usize())
+                    .cloned()
+                    .unwrap_or(Expr::Nil);
+
+                match value {
+                    Expr::Procedure(proc) => {
+                        let closure = Closure::new(proc);
+                        let closure_handle = Handle::new(closure);
+                        vm.operand.push(Expr::Closure(closure_handle));
+                    }
+                    _ => {
+                        return Err(Error::Reason("expected procedure definition".to_string()));
+                    }
+                }
             }
-            Op::CallEnvProc { arity } => todo!("call procedure"),
+            Op::CallClosure { arity } => {
+                let lo = vm.operand.len() - arity as usize;
+
+                // The value just below the arguments is expected to hold the callable.
+                let callable = &vm.operand[lo - 1];
+                let args = &vm.operand[lo..];
+
+                // The value just below the arguments is expected to hold the callable.
+                let callable = &vm.operand[lo - 1];
+                let args = &vm.operand[lo..];
+
+                return match callable {
+                    Expr::Closure(closure) => Ok(ProcAction::Call(closure.clone(), lo)),
+                    _ => Err(Error::Reason("invalid callable type".to_string())),
+                };
+            }
 
             // Call a native function.
             //
@@ -167,6 +224,8 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
                 // The value just below the arguments is expected to hold the callable.
                 let callable = &vm.operand[lo - 1];
                 let args = &vm.operand[lo..];
+
+                println!("Op::CallNative, eval stack: {:?}", vm.operand);
 
                 let value = match callable {
                     Expr::NativeFunc(func) => func(env, args)?,
