@@ -13,3 +13,6 @@
 
 (define y #f)
 (display y)
+
+;; Basic local variable usage
+(lambda (x y) (define z 3) (+ x y z))

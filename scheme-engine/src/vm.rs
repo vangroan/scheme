@@ -9,7 +9,9 @@ use std::rc::Rc;
 
 pub fn eval(closure: Handle<Closure>) -> Result<Expr> {
     let mut vm = Vm::new();
-    vm.run(closure)
+    let result = vm.run(closure);
+    println!("VM eval stack: {:?}", vm.operand);
+    result
 }
 
 struct Vm {
@@ -26,6 +28,9 @@ struct CallFrame {
 
     /// The index into the machine's operand stack where this frame's working set starts.
     stack_offset: usize,
+
+    /// Saved program counter, so the this frame can resume after control is returned.
+    pc: usize,
 }
 
 /// A procedure action is a message from the instruction
@@ -65,6 +70,7 @@ impl Vm {
         self.frames.push(CallFrame {
             closure,
             stack_offset: self.operand.len(),
+            pc: 0,
         });
 
         run_interpreter(self)
@@ -87,6 +93,7 @@ fn run_interpreter(vm: &mut Vm) -> Result<Expr> {
                 let new_frame = CallFrame {
                     closure,
                     stack_offset,
+                    pc: 0,
                 };
 
                 let old_frame = mem::replace(&mut frame, new_frame);
@@ -117,7 +124,7 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
     let env_rc = proc.env.upgrade().unwrap();
     let env = &mut *env_rc.borrow_mut();
     let ops = proc.bytecode();
-    let mut pc: usize = 0;
+    let mut pc: usize = frame.pc;
 
     println!("eval stack: {:?}", vm.operand);
 
@@ -203,10 +210,6 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
                 let callable = &vm.operand[lo - 1];
                 let args = &vm.operand[lo..];
 
-                // The value just below the arguments is expected to hold the callable.
-                let callable = &vm.operand[lo - 1];
-                let args = &vm.operand[lo..];
-
                 return match callable {
                     Expr::Closure(closure) => Ok(ProcAction::Call(closure.clone(), lo)),
                     _ => Err(Error::Reason("invalid callable type".to_string())),
@@ -228,13 +231,28 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
                 println!("Op::CallNative, eval stack: {:?}", vm.operand);
 
                 let value = match callable {
-                    Expr::NativeFunc(func) => func(env, args)?,
+                    // Native call does not unwind the Scheme call stack to push a frame.
+                    //
+                    // It simply calls into Rust from within the instruction loop.
+                    Expr::NativeFunc(func) => {
+                        let value = func(env, args)?;
+
+                        vm.operand.truncate(lo - 1);
+                        vm.operand.push(value);
+                    }
+                    // A Scheme closure call must unwind the stack to push a new frame,
+                    // to avoid a borrow puzzle.
+                    Expr::Closure(closure) => {
+                        // Save the program counter from this Rust stack frame to
+                        // the Scheme frame so we can resume the frame after control
+                        // is returned.
+                        frame.pc = pc;
+
+                        return Ok(ProcAction::Call(closure.clone(), lo));
+                    }
                     Expr::Procedure(_) => todo!("other call types not implemented yet"),
                     _ => return Err(Error::Reason("invalid callable type".to_string())),
                 };
-
-                vm.operand.truncate(lo - 1);
-                vm.operand.push(value);
             }
             Op::End => {
                 let value = vm.operand.pop().unwrap_or(Expr::Nil);

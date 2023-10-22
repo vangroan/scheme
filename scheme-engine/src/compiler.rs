@@ -28,6 +28,7 @@ pub fn compile(env: Handle<Env>, expr: &Expr) -> Result<Handle<Closure>> {
         depth: 0,
         locals: Vec::new(),
         stack_offset: 0,
+        stack_offsets: Vec::new(),
     };
 
     compiler.compile_expr(expr)?;
@@ -46,6 +47,13 @@ pub fn compile(env: Handle<Env>, expr: &Expr) -> Result<Handle<Closure>> {
     Ok(Handle::new(closure))
 }
 
+macro_rules! error_unbound_variable {
+    ($name:expr) => {
+        Error::Reason(format!("unbound variable {:?}", $name))
+    };
+}
+
+// TODO: Establish rules on whether the compiler may or may not mutate the given environment.
 struct Compiler {
     /// The current procedure being compiled.
     /// TODO: Once the environment stack is figured out, we could change this to a borrow.
@@ -78,6 +86,7 @@ struct Compiler {
     /// Any [`LocalId`] declared within the current scope will be relative to
     /// this position.
     stack_offset: usize,
+    stack_offsets: Vec<usize>,
 }
 
 impl Compiler {
@@ -130,9 +139,13 @@ impl Compiler {
     where
         F: FnOnce(&mut Compiler) -> Result<T>,
     {
+        self.stack_offsets.push(self.stack_offset);
+        self.stack_offset = self.locals.len();
         self.depth += 1;
         let result = block(self);
         self.depth -= 1;
+        self.locals.truncate(self.stack_offset);
+        self.stack_offset = self.stack_offsets.pop().unwrap();
 
         result
     }
@@ -188,6 +201,10 @@ impl Compiler {
             Expr::Nil => {
                 self.proc.emit_op(Op::PushNil);
             }
+            // Void literal
+            Expr::Nil => {
+                self.proc.emit_op(Op::PushVoid);
+            }
             // Number literal
             Expr::Number(number) => {
                 let constant_id = self.add_constant(expr.clone());
@@ -228,33 +245,21 @@ impl Compiler {
     /// # Return
     ///
     /// Returns the symbol for the location where the variable is stored.
-    fn compile_access(&mut self, name: &str) -> Result<Variable> {
-        // First attempt to resolve the variable in a local scope,
-        // an outer scope, then the enclosing environment.
-        for local in self.locals.iter().rev() {
-            if name == local.name {
-                if self.depth != local.depth {
-                    todo!("up-values for locals outside of the current scope");
-                }
-
-                self.proc.emit_op(Op::LoadLocalVar(local.id));
-
-                return Ok(Variable::Local(local.id));
+    fn compile_access(&mut self, name: &str) -> Result<()> {
+        match self.resolve_variable(name) {
+            Some(Variable::Local(local_id)) => {
+                self.proc.emit_op(Op::LoadLocalVar(local_id));
+                Ok(())
             }
+            Some(Variable::UpValue(_)) => {
+                todo!("compile access to up-value")
+            }
+            Some(Variable::Env(symbol)) => {
+                self.proc.emit_op(Op::LoadEnvVar(symbol));
+                Ok(())
+            }
+            None => Err(error_unbound_variable!(name)),
         }
-
-        // If the variable cannot be found in the locals of the lexical scopes,
-        // then we fall back onto the enclosing environment.
-        let symbol = self
-            .env
-            .borrow()
-            .resolve_var(name)
-            .ok_or_else(|| Error::Reason(format!("unbound variable {name:?}")))?;
-
-        // VM: Load the variable from the environment onto the operand stack.
-        self.proc.emit_op(Op::LoadEnvVar(symbol));
-
-        Ok(Variable::Symbol(symbol))
     }
 
     fn compile_form(&mut self, list: &[Expr]) -> Result<()> {
@@ -332,40 +337,67 @@ impl Compiler {
                 // TODO: Walk scope in reverse to find variable.
 
                 // Lookup procedure using the first atom of the sequence.
-                let symbol = self
-                    .env
-                    .borrow()
-                    .resolve_var(ident.as_str())
-                    .ok_or_else(|| Error::Reason(format!("unbound variable {ident:?}")))?;
-                let value = self.env.borrow().get_var(symbol).cloned().unwrap();
-                self.proc.emit_op(Op::LoadEnvVar(symbol));
+                let variable = self
+                    .resolve_variable(ident.as_str())
+                    .ok_or_else(|| error_unbound_variable!(ident.as_str()))?;
+
+                // todo!("FIXME: We need an actual value to determine which function type to call, but local stack doesn't store variables.");
+                // The compiler loses track of what value is precisely defined in a variable.
+                //
+                // We can't assume, or infer, the call type (or value) stored because it can
+                // be mutated at any time.
+                //
+                // Potentially the compiler can be made smarter to recognise situations where
+                // a variable is not mutated, and a procedure definition can be safely chosen at
+                // compile time.
+                //
+                // However for now the VM will have to specialise the precise call type at runtime.
+                // Arity checks will also be done at runtime.
+                match variable {
+                    // Closure is stored in a local variable for the current scope.
+                    Variable::Local(local_id) => {
+                        self.proc.emit_op(Op::LoadLocalVar(local_id));
+                    }
+                    Variable::UpValue(_) => {
+                        todo!("call closure stored in up-value")
+                    }
+                    // Closure is stored in an environment object.
+                    Variable::Env(symbol) => {
+                        self.proc.emit_op(Op::LoadEnvVar(symbol));
+                    }
+                };
 
                 // TODO: Variadic procedures take the rest of their arguments as list. We need to store signature information to accomplish this.
+                // TODO: Lists need to be changed ti linked-lists.
                 for arg in rest {
                     self.compile_expr(arg)?;
                 }
 
-                match value {
-                    Expr::Closure(_) => self.proc.emit_op(Op::CallClosure {
-                        arity: rest.len() as u8,
-                    }),
-                    Expr::NativeFunc(_) => self.proc.emit_op(Op::CallNative {
-                        arity: rest.len() as u8,
-                    }),
-                    Expr::Procedure(_) => {
-                        // Procedures are not stored in variables, but are rather
-                        // wrapped in closures when defined.
-                        //
-                        // This adds overhead when creating the procedure, but simplifies
-                        // the interpreter implementation because the VM only needs to
-                        // know how to call closures.
-                        panic!("procedures cannot be called directly")
-                    }
-                    _ => {
-                        println!("compile_call list: {list:?}");
-                        todo!("call type not supported yet")
-                    }
-                }
+                self.proc.emit_op(Op::CallNative {
+                    arity: rest.len() as u8,
+                });
+
+                // match value {
+                //     Expr::Closure(_) => self.proc.emit_op(Op::CallClosure {
+                //         arity: rest.len() as u8,
+                //     }),
+                //     Expr::NativeFunc(_) => self.proc.emit_op(Op::CallNative {
+                //         arity: rest.len() as u8,
+                //     }),
+                //     Expr::Procedure(_) => {
+                //         // Procedures are not stored in variables, but are rather
+                //         // wrapped in closures when defined.
+                //         //
+                //         // This adds overhead when creating the procedure, but simplifies
+                //         // the interpreter implementation because the VM only needs to
+                //         // know how to call closures.
+                //         panic!("procedures cannot be called directly")
+                //     }
+                //     operator => {
+                //         println!("compile_call operator: {operator:?}, list: {list:?}");
+                //         todo!("call type not supported yet")
+                //     }
+                // }
 
                 Ok(())
             }
@@ -390,25 +422,24 @@ impl Compiler {
     /// # Return
     ///
     /// Returns the [`SymbolId`] of the defined variable.
-    fn compile_define_form(&mut self, rest: &[Expr]) -> Result<SymbolId> {
-        // TODO: `define` expression may only appear in specific places.
+    fn compile_define_form(&mut self, rest: &[Expr]) -> Result<Variable> {
+        // TODO: May define create duplicates in top-level but not block level?
         match rest
             .get(0)
-            .ok_or_else(|| Error::Reason("identifier expected".to_string()))?
+            .ok_or_else(|| Error::Reason("identifier or list expected".to_string()))?
         {
             Expr::Ident(var_name) => {
-                // Variables can be redefined
-                let symbol = self.env.borrow_mut().intern_var(var_name);
-
-                // Define body is an expression, but may be omitted.
-                // TODO: Do we need an undefined, unspecified or void value?
-                let body = rest.get(1).unwrap_or(&Expr::Nil);
-
-                // This expression leaves a value on the stack.
-                self.compile_expr(body)?;
-
                 match self.context {
                     Context::TopLevel => {
+                        // Variables can be redefined
+                        let symbol = self.env.borrow_mut().intern_var(var_name);
+
+                        // Define body is an expression and not a block, but may be omitted.
+                        let body = rest.get(1).unwrap_or(&Expr::Void);
+
+                        // This expression leaves a value on the stack.
+                        self.compile_expr(body)?;
+
                         self.proc.emit_op(Op::StoreEnvVar(symbol));
                         self.proc.emit_op(Op::Pop);
 
@@ -417,18 +448,36 @@ impl Compiler {
                         // It is the responsibility of the few contexts where define
                         // is allowed to clean this void off the stack.
                         self.proc.emit_op(Op::PushVoid);
+
+                        Ok(Variable::Env(symbol))
                     }
                     Context::BodyStart => {
                         let local_id = self.declare_local(var_name.as_str())?;
+
+                        // Define body is an expression and not a block, but may be omitted.
+                        let body = rest.get(1).unwrap_or(&Expr::Void);
+
+                        // This expression leaves a value on the stack.
+                        self.compile_expr(body)?;
+
                         self.proc.emit_op(Op::StoreLocalVar(local_id));
+                        self.proc.emit_op(Op::Pop);
+
+                        // INVARIANT: We don't need to leave Void on the stack.
+                        //
+                        // This define form may only appear in bodies, they are
+                        // always part of a sequence that will discard expression
+                        // results until the last one.
+                        //
+                        // Creating a body that ends with a define is an error.
+                        //
+                        // This form should never appear at the top-level.
+                        Ok(Variable::Local(local_id))
                     }
                     Context::BodyRest => {
                         return Err(Error::Reason("ill-formed special form: define must appear at top-level or first in body".to_string()));
                     }
                 }
-                // FIXME: StoreEnvVar does not pop, and we're leaving the pop to `compile_sequence`, but define is not suppose to return a value.
-
-                Ok(symbol)
             }
             Expr::List(_formals) => {
                 todo!("procedure definition")
@@ -555,19 +604,28 @@ impl Compiler {
             compiler.context(Context::BodyRest, |compiler| {
                 // No further definitions not allowed here.
 
-                if let Some((last, preceding)) = body_expressions.split_last() {
-                    for expr in preceding {
-                        compiler.compile_expr(expr)?;
+                match body_expressions.split_last() {
+                    Some((last, preceding)) => {
+                        for expr in preceding {
+                            compiler.compile_expr(expr)?;
 
-                        // Discard the result values of the preceding expressions.
-                        compiler.proc.emit_op(Op::Pop);
+                            // Discard the result values of the preceding expressions.
+                            compiler.proc.emit_op(Op::Pop);
+                        }
+
+                        // Only the last expression's result is left on the stack.
+                        compiler.compile_expr(last)?;
+
+                        Ok(())
                     }
-
-                    // Only the last expression's result is left on the stack.
-                    compiler.compile_expr(last)?;
+                    None => {
+                        // INVARIANT: Preventing the define form as the last expression of a body
+                        // is an important assumption in `compile_define_form()`.
+                        Err(Error::Reason(
+                            "body must contain at least one expression".to_string(),
+                        ))
+                    }
                 }
-
-                Ok(())
             })?;
 
             Ok(())
@@ -639,6 +697,28 @@ impl Compiler {
         });
         Ok(local_id)
     }
+
+    /// Scan the lexical scopes for a variable with the given name.
+    fn resolve_variable(&self, name: &str) -> Option<Variable> {
+        // First attempt to resolve the variable in a local scope,
+        // an outer scope, then the enclosing environment.
+        for local in self.locals.iter().rev() {
+            if name == local.name {
+                if self.depth != local.depth {
+                    todo!("up-values for locals outside of the current scope");
+                }
+
+                return Some(Variable::Local(local.id));
+            }
+        }
+
+        // If the variable cannot be found in the locals of the lexical scopes,
+        // then we fall back onto the enclosing environment.
+        self.env
+            .borrow()
+            .resolve_var(name)
+            .map(|symbol| Variable::Env(symbol))
+    }
 }
 
 /// Mutable bookkeeping for compiling a procedure.
@@ -685,8 +765,9 @@ impl ProcState {
 #[derive(Debug)]
 enum Variable {
     Local(LocalId),
+    UpValue(LocalId),
     /// The symbol identifying the location where the variable is stored int he current environment.
-    Symbol(SymbolId),
+    Env(SymbolId),
 }
 
 /// Slot for a local variable on the lexical stack.

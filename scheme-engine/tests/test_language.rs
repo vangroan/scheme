@@ -1,3 +1,6 @@
+//! Aggregated tests for language features, in Scheme files.
+//!
+//! See scripts in [`./language`]
 use scheme_engine::{error::Error, Closure, Env, Expr, Handle};
 
 fn compile_closure_env(source: &str) -> Result<(Handle<Env>, Handle<Closure>), Error> {
