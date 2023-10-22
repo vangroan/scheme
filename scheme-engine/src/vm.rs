@@ -5,7 +5,6 @@ use crate::expr::{Closure, Expr};
 use crate::handle::Handle;
 use crate::opcode::Op;
 use std::mem;
-use std::rc::Rc;
 
 pub fn eval(closure: Handle<Closure>) -> Result<Expr> {
     let mut vm = Vm::new();

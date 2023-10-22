@@ -197,7 +197,7 @@ fn boolean_and(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
     // Default return value if procedure has no arguments.
     let mut expr = &Expr::Bool(true);
 
-    for (index, arg) in args.iter().enumerate() {
+    for arg in args.iter() {
         if let Expr::Bool(false) = arg {
             // If any #f is encountered, return early.
             return Ok(Expr::Bool(false));

@@ -202,11 +202,11 @@ impl Compiler {
                 self.proc.emit_op(Op::PushNil);
             }
             // Void literal
-            Expr::Nil => {
+            Expr::Void => {
                 self.proc.emit_op(Op::PushVoid);
             }
             // Number literal
-            Expr::Number(number) => {
+            Expr::Number(_) => {
                 let constant_id = self.add_constant(expr.clone());
                 self.proc.emit_op(Op::PushConstant(constant_id));
             }
@@ -479,8 +479,16 @@ impl Compiler {
                     }
                 }
             }
-            Expr::List(_formals) => {
-                todo!("procedure definition")
+            Expr::List(formals) => {
+                // The first formal is the name of the procedure.
+                let (name, args) = formals
+                    .split_first()
+                    .ok_or_else(|| Error::Reason("ill-formed special form".to_string()))?;
+
+                // Declare a variable first because the lambda body can
+                // recursively call itself using the variable name.
+
+                todo!("define procedure form")
             }
             _ => Err(Error::Reason("ill-formed special form".to_string())),
         }
@@ -560,7 +568,7 @@ impl Compiler {
 
             let proc = proc_state.into_proc(self.env.clone());
 
-            /// The procedure definition is stored as a constant in the outer environment.
+            // The procedure definition is stored as a constant in the outer environment.
             let constant_id = self.add_constant(Expr::Procedure(Rc::new(proc)));
             self.proc.emit_op(Op::CreateClosure(constant_id));
 

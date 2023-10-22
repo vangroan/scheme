@@ -40,7 +40,7 @@ fn run_repl() {
                                 // Don't print a #!void, it's the "nothing" value
                             }
                             Ok(value) => {
-                                println!("{:?}", value);
+                                println!("{}", value.repr());
                             }
                             Err(err) => {
                                 eprintln!("error: {err}");
