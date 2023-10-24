@@ -3,6 +3,7 @@ use std::rc::Rc;
 
 use smol_str::SmolStr;
 
+use crate::declare_id;
 use crate::env::{ConstantId, Env, LocalId};
 use crate::error::{Error, Result};
 use crate::expr::{Closure, Expr, Keyword, Proc};
@@ -251,7 +252,12 @@ impl Compiler {
                 self.proc.emit_op(Op::LoadLocalVar(local_id));
                 Ok(())
             }
-            Some(Variable::UpValue(_)) => {
+            // Current scope is capturing a local variable in an outer scope's slot.
+            //
+            // The current closure will have to keep track of captured values on
+            // the heap.
+            Some(Variable::NonLocal(stack_pos)) => {
+                // TODO: What does a LoadUpValue opcode look like?
                 todo!("compile access to up-value")
             }
             Some(Variable::Env(symbol)) => {
@@ -358,7 +364,7 @@ impl Compiler {
                     Variable::Local(local_id) => {
                         self.proc.emit_op(Op::LoadLocalVar(local_id));
                     }
-                    Variable::UpValue(_) => {
+                    Variable::NonLocal(_) => {
                         todo!("call closure stored in up-value")
                     }
                     // Closure is stored in an environment object.
@@ -401,6 +407,7 @@ impl Compiler {
 
                 Ok(())
             }
+            // TODO: Expression as operator, which evaluate to either an ident or closure.
             _ => {
                 println!("compile_call list: {list:?}");
                 Err(Error::Reason("operator is not a procedure".to_string()))
@@ -698,8 +705,10 @@ impl Compiler {
         }
 
         let local_id = LocalId::new(index as u8);
+        let stack_offset = StackPos::new(self.locals.len());
         self.locals.push(Local {
             id: local_id,
+            stack_offset,
             name: SmolStr::from(name),
             depth: self.depth,
         });
@@ -712,11 +721,14 @@ impl Compiler {
         // an outer scope, then the enclosing environment.
         for local in self.locals.iter().rev() {
             if name == local.name {
-                if self.depth != local.depth {
-                    todo!("up-values for locals outside of the current scope");
+                return if self.depth == local.depth {
+                    // Variable is in a local slot in this scope.
+                    Some(Variable::Local(local.id))
+                } else {
+                    // Variable is in a local slot of an outer scope.
+                    // Some(Variable::NonLocal(UpValueInfo{ stack_offset: local.stack_offset }))
                 }
-
-                return Some(Variable::Local(local.id));
+                todo!("intern upvalue")
             }
         }
 
@@ -727,6 +739,14 @@ impl Compiler {
             .resolve_var(name)
             .map(|symbol| Variable::Env(symbol))
     }
+
+    fn resolve_local(&self, name: &str) {
+        todo!()
+    }
+
+    fn find_up_value(&self, name: &str) {
+        todo!()
+    }
 }
 
 /// Mutable bookkeeping for compiling a procedure.
@@ -736,6 +756,8 @@ struct ProcState {
     arity: usize,
     variadic: bool,
     constants: Vec<Expr>,
+    /// List of variables in an outer scope.
+    up_values: Vec<UpValueInfo>,
 }
 
 impl ProcState {
@@ -745,6 +767,7 @@ impl ProcState {
             arity: 0,
             variadic: false,
             constants: Vec::new(),
+            up_values: Vec::new(),
         }
     }
 
@@ -758,6 +781,7 @@ impl ProcState {
             arity,
             variadic,
             constants,
+            up_values: Vec::new(),
         } = self;
 
         Proc {
@@ -768,23 +792,97 @@ impl ProcState {
             env: env.downgrade(),
         }
     }
+
+    fn inter_up_value(&mut self) -> UpValueInfo {
+
+    }
 }
 
 #[derive(Debug)]
 enum Variable {
     Local(LocalId),
-    UpValue(LocalId),
+    NonLocal(UpValueInfo),
     /// The symbol identifying the location where the variable is stored int he current environment.
     Env(SymbolId),
 }
 
+declare_id!(
+    /// The absolute stack index where a local variable is located, regardless of scope.
+    ///
+    /// This points into the stack of locals for the *lexical scopes* and is only valid
+    /// for compile time.
+    ///
+    /// During runtime the evaluation stack may have more frames, and temporaries, taking
+    /// up stack space.
+    /// TODO: This is confusing with `stack_offset` for start of frame. Rename to `StackPos`?
+    struct StackPos(usize)
+);
+
 /// Slot for a local variable on the lexical stack.
 #[derive(Debug, Clone)]
 struct Local {
+    /// The Id describes the location for where the local variable is stored.
+    ///
+    /// It is relative to the start of a scope's runtime stack frame.
+    ///
+    /// It must thus be valid fro both compile time (lexical scope) and runtime (evaluation stack).
     id: LocalId,
+    stack_offset: StackPos,
     name: SmolStr,
     /// The depth of the scope where the variable was declared.
     depth: usize,
+}
+
+#[derive(Debug, Clone)]
+struct UpValueInfo {
+    /// Index into lexical stack where the local variable is located.
+    stack_pos: StackPos,
+}
+
+/// Indicates how far from the local scope the up-value originated.
+///
+/// An open up-value pointing to the immediate parent scope has its
+/// value in that parent's local variables.
+///
+/// An open up-value with a value from beyond that, has to point to
+/// the parent scope's up-value list.
+///
+/// During runtime, outer scopes are not guaranteed to be on the
+/// call stack when a closure is instantiated, because multiple
+/// closures can be nested and returned.
+///
+/// In this example z is local, y is an up-value in the parent's locals (scope `Parent`),
+/// and x is an up-value in the parent's up-values (scope `Outer`).
+///
+/// ```scheme
+/// (lambda (x)
+///   (lambda (y)
+///     (lambda (z)
+///       (+ x y z)
+///   )))
+/// ```
+///
+/// Up-values from outer scopes are copied down into inner scopes,
+/// their handles shared so "closing" will reflect in all, effectively
+/// *flattening* the closures.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum UpValueOrigin {
+    /// UpValue is located in parent's local variables.
+    Parent,
+    /// UpValue is located in parent's up-value list.
+    Outer,
+}
+
+impl UpValueOrigin {
+    #[inline]
+    fn is_parent(&self) -> bool {
+        matches!(self, UpValueOrigin::Parent)
+    }
+
+    #[inline]
+    fn is_outer(&self) -> bool {
+        matches!(self, UpValueOrigin::Outer)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

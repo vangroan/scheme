@@ -1,7 +1,7 @@
 //! Virtual machine.
 
 use crate::error::{Error, Result};
-use crate::expr::{Closure, Expr};
+use crate::expr::{Closure, Expr, UpValue};
 use crate::handle::Handle;
 use crate::opcode::Op;
 use std::mem;
@@ -27,6 +27,14 @@ struct CallFrame {
 
     /// The index into the machine's operand stack where this frame's working set starts.
     stack_offset: usize,
+
+    /// These are the *open* up-values belonging to all closures that have captured
+    /// local variables belonging to this call frame. They are shared with the closure's
+    /// heap space so that closing them reflects within the closure when it escapes.
+    ///
+    /// Before this frame is popped off the call stack, all its captured locals must
+    /// be copied into the up-values, and the up-values closed.
+    up_values: Vec<Handle<UpValue>>,
 
     /// Saved program counter, so the this frame can resume after control is returned.
     pc: usize,
@@ -69,6 +77,7 @@ impl Vm {
         self.frames.push(CallFrame {
             closure,
             stack_offset: self.operand.len(),
+            up_values: Vec::new(),
             pc: 0,
         });
 
@@ -92,6 +101,7 @@ fn run_interpreter(vm: &mut Vm) -> Result<Expr> {
                 let new_frame = CallFrame {
                     closure,
                     stack_offset,
+                    up_values: Vec::new(),
                     pc: 0,
                 };
 
