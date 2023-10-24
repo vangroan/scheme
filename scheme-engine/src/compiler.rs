@@ -851,13 +851,13 @@ struct UpValueInfo {
 /// call stack when a closure is instantiated, because multiple
 /// closures can be nested and returned.
 ///
-/// In this example z is local, y is an up-value in the parent's locals (scope `Parent`),
-/// and x is an up-value in the parent's up-values (scope `Outer`).
+/// In this example z is local, y is an up-value in the parent's locals (origin `Parent`),
+/// and x is an up-value in the parent's up-values (origin `Outer`).
 ///
 /// ```scheme
-/// (lambda (x)
-///   (lambda (y)
-///     (lambda (z)
+/// (lambda (x)      ;; outer
+///   (lambda (y)    ;; parent
+///     (lambda (z)  ;; local
 ///       (+ x y z)
 ///   )))
 /// ```
