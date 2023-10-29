@@ -168,6 +168,12 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
                 env.set_var(symbol, value)?;
                 // don't pop
             }
+            Op::LoadUpValue(up_value_id) => {
+                todo!()
+            }
+            Op::StoreUpValue(up_value_id) => {
+                todo!()
+            }
             Op::LoadLocalVar(local_id) => {
                 let value = vm
                     .operand

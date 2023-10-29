@@ -1,4 +1,4 @@
-use crate::env::{ConstantId, LocalId};
+use crate::env::{ConstantId, LocalId, UpValueId};
 use crate::symbol::SymbolId;
 
 #[derive(Debug, Clone)]
@@ -26,6 +26,9 @@ pub enum Op {
     ///
     /// Does not implicitly pop the value off the stack.
     StoreEnvVar(SymbolId),
+
+    LoadUpValue(UpValueId),
+    StoreUpValue(UpValueId),
 
     LoadLocalVar(LocalId),
 

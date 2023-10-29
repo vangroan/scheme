@@ -13,13 +13,21 @@ declare_id!(
     /// Local variable location identifier.
     ///
     /// This is the offset within the local scope, relative to the
-    /// call frame's starting position in the dynamic operand stack.
+    /// call frame's starting position in the dynamic evaluation stack.
     ///
     /// Importantly not the static lexical scoping stack.
     ///
     /// Thus the absolute position of the local cannot be known, because its
     /// location is determined during runtime.
     pub struct LocalId(u8)
+);
+
+declare_id!(
+    /// Up-value variable location identifier.
+    ///
+    /// This is the index of the up-value in the heap buffer
+    /// of the closure.
+    pub struct UpValueId(u8)
 );
 
 pub struct Env {

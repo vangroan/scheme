@@ -20,3 +20,11 @@
     (define inner (lambda (c) (+ a b c)))
     (inner 3)))
 (assert (= (add-outer 1 2) 6))
+
+(define add-nested
+  (lambda (x)
+    (lambda (y)
+      (lambda (z)
+        (+ x y z)
+        ))))
+(assert (= (add-nested 1 2 3) 6))
