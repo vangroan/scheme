@@ -1,7 +1,9 @@
 //! Execution environment.
+use std::rc::Rc;
+
 use crate::declare_id;
 use crate::error::{Error, Result};
-use crate::expr::{Expr, NativeFunc};
+use crate::expr::{Expr, NativeFunc, Proc};
 use crate::symbol::{SymbolId, SymbolTable};
 
 declare_id!(
@@ -30,6 +32,11 @@ declare_id!(
     pub struct UpValueId(u8)
 );
 
+declare_id!(
+    /// Procedure prototype location identifier.
+    pub struct ProcId(u16)
+);
+
 pub struct Env {
     /// Table of values which do not change during runtime.
     ///
@@ -42,6 +49,9 @@ pub struct Env {
     /// Does not include procedures, but can include closure instances.
     variables: SymbolTable,
     var_values: Vec<Expr>,
+
+    /// Table of procedure prototypes that were declared in this environment.
+    pub(crate) procedures: Vec<Rc<Proc>>,
 }
 
 impl Env {
@@ -52,6 +62,8 @@ impl Env {
 
             variables: SymbolTable::new(),
             var_values: Vec::new(),
+
+            procedures: Vec::new(),
         }
     }
 
@@ -78,6 +90,12 @@ impl Env {
         let symbol = self.variables.intern_symbol(name);
         grow_table(&mut self.var_values, symbol.as_usize());
         symbol
+    }
+
+    pub(crate) fn add_procedure(&mut self, procedure: Proc) -> ProcId {
+        let index = self.procedures.len();
+        self.procedures.push(Rc::new(procedure));
+        ProcId::new(index as u16)
     }
 
     /// TODO: Store argument arity information so it can be validated on compile or at runtime.

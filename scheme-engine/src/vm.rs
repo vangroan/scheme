@@ -3,7 +3,7 @@
 use crate::error::{Error, Result};
 use crate::expr::{Closure, Expr, UpValue};
 use crate::handle::Handle;
-use crate::opcode::Op;
+use crate::opcode::{Op, UpValueOrigin};
 use std::mem;
 
 pub fn eval(closure: Handle<Closure>) -> Result<Expr> {
@@ -83,6 +83,14 @@ impl Vm {
 
         run_interpreter(self)
     }
+
+    fn parent_frame(&self) -> Option<&CallFrame> {
+        // During the instruction loop the current call frame is not
+        // in the `frames` stack, but owned by the Rust stack.
+        //
+        // The top frame in the stack is the previous, parent frame.
+        self.frames.last()
+    }
 }
 
 /// Run the interpreter loop.
@@ -123,6 +131,8 @@ fn run_interpreter(vm: &mut Vm) -> Result<Expr> {
 
 /// Run the bytecode instruction loop.
 fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
+    println!("eval stack: {:?}", vm.operand);
+
     // Pull relevant state into flat local variables to reduce the
     // overhead of jumping pointers and bookkeeping of borrowing objects.
     let mut closure_rc = frame.closure.clone();
@@ -130,18 +140,20 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
     // let proc_rc = closure_ref.procedure().clone();
     let proc_rc = closure_rc.borrow().procedure_rc().clone();
     let proc = &*proc_rc;
+    let closure = &mut *closure_rc.borrow_mut();
     let env_rc = proc.env.upgrade().unwrap();
     let env = &mut *env_rc.borrow_mut();
     let ops = proc.bytecode();
     let mut pc: usize = frame.pc;
-
-    println!("eval stack: {:?}", vm.operand);
 
     loop {
         let op = ops[pc].clone();
         pc += 1;
 
         match op {
+            Op::Bail => {
+                panic!("Bail!")
+            }
             Op::PushNil => {
                 vm.operand.push(Expr::Nil);
             }
@@ -169,7 +181,15 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
                 // don't pop
             }
             Op::LoadUpValue(up_value_id) => {
-                todo!()
+                match closure.up_values[up_value_id.as_usize()].borrow().clone() {
+                    UpValue::Open(stack_pos) => {
+                        let value = vm.operand[stack_pos].clone();
+                        vm.operand.push(value);
+                    }
+                    UpValue::Closed(value) => {
+                        vm.operand.push(value);
+                    }
+                }
             }
             Op::StoreUpValue(up_value_id) => {
                 todo!()
@@ -199,24 +219,55 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
             Op::Pop => {
                 let _ = vm.operand.pop();
             }
-            Op::CreateClosure(constant_id) => {
+            Op::CaptureValue(_) => {
+                unreachable!("capture-value must only be processed by closure creation")
+            }
+            Op::CreateClosure(proc_id) => {
+                println!("create closure {proc_id:?}");
                 // The constant stores the procedure definition to instantiate.
-                let value = proc
-                    .constants
-                    .get(constant_id.as_usize())
+                let prototype = env
+                    .procedures
+                    .get(proc_id.as_usize())
                     .cloned()
-                    .unwrap_or(Expr::Nil);
+                    .ok_or_else(|| Error::Reason("expected procedure definition".to_string()))?;
 
-                match value {
-                    Expr::Procedure(proc) => {
-                        let closure = Closure::new(proc);
-                        let closure_handle = Handle::new(closure);
-                        vm.operand.push(Expr::Closure(closure_handle));
+                // Read the capture arguments.
+                let mut up_values = Vec::new();
+
+                println!("program counter: {pc}");
+                for i in 0..prototype.up_value_count {
+                    println!("processing argument {i}");
+                    let op = ops[pc].clone();
+                    match op {
+                        Op::CaptureValue(origin) => {
+                            match origin {
+                                // Create a new up-value pointing to a local variable
+                                // in the current scope.
+                                UpValueOrigin::Parent(local_id) => {
+                                    up_values.push(Handle::new(UpValue::Open(
+                                        frame.stack_offset + local_id.as_usize(),
+                                    )));
+                                }
+                                // Share a handle to an existing up-value.
+                                UpValueOrigin::Outer(up_value_id) => {
+                                    up_values
+                                        .push(closure.up_values[up_value_id.as_usize()].clone());
+                                }
+                            }
+                        }
+                        unexpected_op => {
+                            return Err(Error::Reason(format!(
+                                "invalid capture-value argument instruction: {unexpected_op:?}"
+                            )));
+                        }
                     }
-                    _ => {
-                        return Err(Error::Reason("expected procedure definition".to_string()));
-                    }
+                    pc += 1;
                 }
+                println!("program counter: {pc}");
+
+                let closure = Closure::with_up_values(prototype, up_values);
+                let closure_handle = Handle::new(closure);
+                vm.operand.push(Expr::Closure(closure_handle));
             }
             Op::CallClosure { arity } => {
                 let lo = vm.operand.len() - arity as usize;
@@ -242,8 +293,6 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
                 // The value just below the arguments is expected to hold the callable.
                 let callable = &vm.operand[lo - 1];
                 let args = &vm.operand[lo..];
-
-                println!("Op::CallNative, eval stack: {:?}", vm.operand);
 
                 let value = match callable {
                     // Native call does not unwind the Scheme call stack to push a frame.

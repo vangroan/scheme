@@ -9,7 +9,7 @@ use crate::error::{Error, Result};
 use crate::expr::{Closure, Expr, Keyword, Proc};
 use crate::handle::Handle;
 use crate::limits::*;
-use crate::opcode::Op;
+use crate::opcode::{Op, UpValueOrigin};
 use crate::symbol::SymbolId;
 
 /// Compiles the given top-level expression into bytecode.
@@ -104,6 +104,9 @@ impl Compiler {
             arity: 0,
             variadic: false,
             constants: proc.constants.into_boxed_slice(),
+            // Top-level procedure doesn't close over anything, because
+            // there is no outer scopes.
+            up_value_count: 0,
             // By storing the procedure in the environment
             // we've created a circular reference.
             env: env.downgrade(),
@@ -157,9 +160,12 @@ impl Compiler {
     where
         F: FnOnce(&mut Compiler) -> Result<T>,
     {
+        println!("start procedure");
         let prev_proc = mem::replace(&mut self.proc, ProcState::new());
+        self.proc_stack.push(prev_proc);
         let result = self.scope(|compiler| Ok(block(compiler)))?;
-        let new_proc = mem::replace(&mut self.proc, prev_proc);
+        let new_proc = mem::replace(&mut self.proc, self.proc_stack.pop().unwrap());
+        println!("end procedure");
 
         result.map(|r| (r, new_proc))
     }
@@ -335,85 +341,108 @@ impl Compiler {
             return Err(Error::Reason("ill-formed expression".to_string()));
         }
 
-        // TODO: compile first expr
-        match &list[0] {
-            Expr::Ident(ident) => {
-                let rest = &list[1..];
-                println!("rest of arguments: {rest:?}");
-
-                // TODO: Walk scope in reverse to find variable.
-
-                // Lookup procedure using the first atom of the sequence.
-                let variable = self
-                    .resolve_variable_mut(ident.as_str())
-                    .ok_or_else(|| error_unbound_variable!(ident.as_str()))?;
-
-                // todo!("FIXME: We need an actual value to determine which function type to call, but local stack doesn't store variables.");
-                // The compiler loses track of what value is precisely defined in a variable.
-                //
-                // We can't assume, or infer, the call type (or value) stored because it can
-                // be mutated at any time.
-                //
-                // Potentially the compiler can be made smarter to recognise situations where
-                // a variable is not mutated, and a procedure definition can be safely chosen at
-                // compile time.
-                //
-                // However for now the VM will have to specialise the precise call type at runtime.
-                // Arity checks will also be done at runtime.
-                match variable {
-                    // Closure is stored in a local variable for the current scope.
-                    Variable::Local(local_id) => {
-                        self.proc.emit_op(Op::LoadLocalVar(local_id));
-                    }
-                    Variable::NonLocal(_) => {
-                        todo!("call closure stored in up-value")
-                    }
-                    // Closure is stored in an environment object.
-                    Variable::Global(symbol) => {
-                        self.proc.emit_op(Op::LoadEnvVar(symbol));
-                    }
-                };
-
-                // TODO: Variadic procedures take the rest of their arguments as list. We need to store signature information to accomplish this.
-                // TODO: Lists need to be changed ti linked-lists.
-                for arg in rest {
-                    self.compile_expr(arg)?;
+        if let Some((operator, rest)) = list.split_first() {
+            match operator {
+                // Variable can be resolved at compile time.
+                Expr::Ident(ident) => {
+                    // Lookup procedure using the first atom of the sequence.
+                    self.compile_access(ident.as_str())?;
                 }
-
-                self.proc.emit_op(Op::CallNative {
-                    arity: rest.len() as u8,
-                });
-
-                // match value {
-                //     Expr::Closure(_) => self.proc.emit_op(Op::CallClosure {
-                //         arity: rest.len() as u8,
-                //     }),
-                //     Expr::NativeFunc(_) => self.proc.emit_op(Op::CallNative {
-                //         arity: rest.len() as u8,
-                //     }),
-                //     Expr::Procedure(_) => {
-                //         // Procedures are not stored in variables, but are rather
-                //         // wrapped in closures when defined.
-                //         //
-                //         // This adds overhead when creating the procedure, but simplifies
-                //         // the interpreter implementation because the VM only needs to
-                //         // know how to call closures.
-                //         panic!("procedures cannot be called directly")
-                //     }
-                //     operator => {
-                //         println!("compile_call operator: {operator:?}, list: {list:?}");
-                //         todo!("call type not supported yet")
-                //     }
-                // }
-
-                Ok(())
+                // Operator is an expression that must first be evaluated.
+                expr => {
+                    self.compile_expr(expr)?;
+                }
             }
-            // TODO: Expression as operator, which evaluate to either an ident or closure.
-            _ => {
-                println!("compile_call list: {list:?}");
-                Err(Error::Reason("operator is not a procedure".to_string()))
+
+            // TODO: Variadic procedures take the rest of their arguments as list. We need to store signature information to accomplish this.
+            // TODO: Lists need to be changed ti linked-lists.
+            for arg in rest {
+                self.compile_expr(arg)?;
             }
+
+            self.proc.emit_op(Op::CallNative {
+                arity: rest.len() as u8,
+            });
+
+            Ok(())
+        } else {
+            Err(Error::Reason("call sequence is empty".to_string()))
         }
+        // match &list[0] {
+        //     Expr::Ident(ident) => {
+        //         let rest = &list[1..];
+        //         println!("rest of arguments: {rest:?}");
+        //
+        //         // Lookup procedure using the first atom of the sequence.
+        //         let variable = self
+        //             .resolve_variable_mut(ident.as_str())
+        //             .ok_or_else(|| error_unbound_variable!(ident.as_str()))?;
+        //
+        //         // todo!("FIXME: We need an actual value to determine which function type to call, but local stack doesn't store variables.");
+        //         // The compiler loses track of what value is precisely defined in a variable.
+        //         //
+        //         // We can't assume, or infer, the call type (or value) stored because it can
+        //         // be mutated at any time.
+        //         //
+        //         // Potentially the compiler can be made smarter to recognise situations where
+        //         // a variable is not mutated, and a procedure definition can be safely chosen at
+        //         // compile time.
+        //         //
+        //         // However for now the VM will have to specialise the precise call type at runtime.
+        //         // Arity checks will also be done at runtime.
+        //         match variable {
+        //             // Closure is stored in a local variable for the current scope.
+        //             Variable::Local(local_id) => {
+        //                 self.proc.emit_op(Op::LoadLocalVar(local_id));
+        //             }
+        //             Variable::NonLocal(_) => {
+        //                 todo!("call closure stored in up-value")
+        //             }
+        //             // Closure is stored in an environment object.
+        //             Variable::Global(symbol) => {
+        //                 self.proc.emit_op(Op::LoadEnvVar(symbol));
+        //             }
+        //         };
+        //
+        //         // TODO: Variadic procedures take the rest of their arguments as list. We need to store signature information to accomplish this.
+        //         // TODO: Lists need to be changed ti linked-lists.
+        //         for arg in rest {
+        //             self.compile_expr(arg)?;
+        //         }
+        //
+        //         self.proc.emit_op(Op::CallNative {
+        //             arity: rest.len() as u8,
+        //         });
+        //
+        //         // match value {
+        //         //     Expr::Closure(_) => self.proc.emit_op(Op::CallClosure {
+        //         //         arity: rest.len() as u8,
+        //         //     }),
+        //         //     Expr::NativeFunc(_) => self.proc.emit_op(Op::CallNative {
+        //         //         arity: rest.len() as u8,
+        //         //     }),
+        //         //     Expr::Procedure(_) => {
+        //         //         // Procedures are not stored in variables, but are rather
+        //         //         // wrapped in closures when defined.
+        //         //         //
+        //         //         // This adds overhead when creating the procedure, but simplifies
+        //         //         // the interpreter implementation because the VM only needs to
+        //         //         // know how to call closures.
+        //         //         panic!("procedures cannot be called directly")
+        //         //     }
+        //         //     operator => {
+        //         //         println!("compile_call operator: {operator:?}, list: {list:?}");
+        //         //         todo!("call type not supported yet")
+        //         //     }
+        //         // }
+        //
+        //         Ok(())
+        //     }
+        //     _ => {
+        //         println!("compile_call list: {list:?}");
+        //         Err(Error::Reason("operator is not a procedure".to_string()))
+        //     }
+        // }
     }
 
     /// Compile the `define` special form.
@@ -574,11 +603,26 @@ impl Compiler {
                 println!("  {index:>6} : {op:?}");
             }
 
-            let proc = proc_state.into_proc(self.env.clone());
+            // Reserve an instruction for creating the closure.
+            // The procedure constant is not ready yet.
+            // let op_index = self.proc.reserve_op(Op::CreateClosure(ConstantId::new(0)));
+            let op_index = self.proc.reserve_op(Op::Bail);
 
+            // Emit arguments that instruction the VM how to capture the up-values
+            // for the closure.
+            for up_value in &proc_state.up_values {
+                self.proc.emit_op(Op::CaptureValue(up_value.origin.clone()));
+            }
+
+            // Mutable compiler state for the procedure prototype is now discarded.
+            let proc = proc_state.into_procedure(self.env.clone());
+
+            // TODO: Store procedure in dedicated environment storage, not constant. In REPL the closure variable can live longer than the constant.
             // The procedure definition is stored as a constant in the outer environment.
-            let constant_id = self.add_constant(Expr::Procedure(Rc::new(proc)));
-            self.proc.emit_op(Op::CreateClosure(constant_id));
+            // let constant_id = self.add_constant(Expr::Procedure(Rc::new(proc)));
+            // self.proc.patch_op(op_index, Op::CreateClosure(constant_id));
+            let proc_id = self.env.borrow_mut().add_procedure(proc);
+            self.proc.patch_op(op_index, Op::CreateClosure(proc_id));
 
             Ok(())
         } else {
@@ -706,6 +750,8 @@ impl Compiler {
         }
 
         let local_id = LocalId::new(index as u8);
+        println!("declare local {local_id:?}:{name:?}");
+
         let stack_offset = StackPos::new(self.proc.locals.len());
         self.proc.locals.push(Local {
             id: local_id,
@@ -725,10 +771,13 @@ impl Compiler {
     /// the variable in an outer scope, that variable must be marked
     /// as captured.
     fn resolve_variable_mut(&mut self, name: &str) -> Option<Variable> {
+        println!("compiler::resolve_variable_mut({name:?})");
+
         if let Some(variable) = resolve_non_env_mut(&mut self.proc, &mut self.proc_stack, name) {
             return Some(variable);
         }
 
+        println!("compiler::resolve_variable_mut(...), resolving env var");
         // If the variable cannot be found in the locals of the lexical scopes,
         // then we fall back onto the enclosing environment.
         self.env
@@ -803,6 +852,8 @@ fn resolve_non_env_mut(
     stack: &mut [ProcState],
     name: &str,
 ) -> Option<Variable> {
+    println!("compiler::resolve_non_env_mut({proc:?}, {stack:?}, {name:?})");
+
     // First attempt to resolve the variable in a local scope,
     // then in an outer scope, then the enclosing environment.
     if let Some(local) = resolve_local(proc, name) {
@@ -820,6 +871,8 @@ fn resolve_non_env_mut(
 
 /// Resolve a local variable in the current procedure, without scanning for up-values.
 fn resolve_local<'a>(proc: &'a mut ProcState, name: &str) -> Option<&'a Local> {
+    println!("compiler::resolve_local({proc:?}, {name:?})");
+
     for local in proc.locals.iter().rev() {
         if name == local.name {
             return Some(local);
@@ -834,6 +887,8 @@ fn find_up_value_mut(
     stack: &mut [ProcState],
     name: &str,
 ) -> Option<UpValueId> {
+    println!("compiler::find_up_value_mut({proc:?}, {stack:?}, {name:?})");
+
     for up_value in &proc.up_values {
         if name == up_value.name {
             // The up-value has previously been captured.
@@ -843,16 +898,20 @@ fn find_up_value_mut(
 
     // No existing up-value has been captured.
     //
-    // Scan the procedure stack looking at their local variables
+    // Scan the procedure stack in reverse looking at their local variables
     // and up-values.
-    if let Some((parent, rest)) = stack.split_first_mut() {
+    if let Some((parent, rest)) = stack.split_last_mut() {
+        println!("compiler::find_up_value_mut(...), parent -> {parent:?}");
+
         match resolve_non_env_mut(parent, rest, name) {
             // A local variable was found in the parent scope.
             Some(Variable::Local(local_id)) => {
+                println!("compiler::find_up_value_mut(...), local -> {local_id:?}");
                 Some(proc.insert_up_value(name, UpValueOrigin::Parent(local_id)))
             }
             // An up-value has been found in a higher scope beyond the parent scope.
             Some(Variable::NonLocal(up_value_id)) => {
+                println!("compiler::find_up_value_mut(...), non-local -> {up_value_id:?}");
                 // Flatten the closure by copying the up-value into this one.
                 Some(proc.insert_up_value(name, UpValueOrigin::Outer(up_value_id)))
             }
@@ -862,11 +921,14 @@ fn find_up_value_mut(
             None => None,
         }
     } else {
+        println!("compiler::find_up_value_mut(...), no parent");
+
         None
     }
 }
 
 /// Mutable bookkeeping for compiling a procedure prototype.
+#[derive(Debug)]
 struct ProcState {
     /// Generated result bytecode.
     code: Vec<Op>,
@@ -894,7 +956,23 @@ impl ProcState {
         self.code.push(op)
     }
 
-    fn into_proc(self, env: Handle<Env>) -> Proc {
+    /// Emit the given instruction, and return its index in the bytecode buffer.
+    ///
+    /// This index can later be used to patch the instruction.
+    fn reserve_op(&mut self, op: Op) -> usize {
+        let index = self.code.len();
+        self.code.push(op);
+        index
+    }
+
+    /// Patch the contents of a previously emitted instruction.
+    fn patch_op(&mut self, index: usize, op: Op) {
+        self.code[index] = op;
+    }
+
+    fn into_procedure(self, env: Handle<Env>) -> Proc {
+        println!("compiled procedure: {self:?}");
+
         let Self {
             code,
             arity,
@@ -909,13 +987,14 @@ impl ProcState {
             arity,
             variadic,
             constants: constants.into_boxed_slice(),
+            up_value_count: up_values.len(),
             env: env.downgrade(),
         }
     }
 
     fn push_up_value(&mut self, up_value: UpValueInfo) -> UpValueId {
         let index = self.up_values.len();
-        let id = UpValueId::from_usize(index);
+        let id = UpValueId::new(index as u8);
         self.up_values.push(UpValueInfo { id, ..up_value });
         id
     }
@@ -923,7 +1002,7 @@ impl ProcState {
     /// Insert up-value without checking if it already exists.
     fn insert_up_value(&mut self, name: &str, origin: UpValueOrigin) -> UpValueId {
         let index = self.up_values.len();
-        let id = UpValueId::from_usize(index);
+        let id = UpValueId::new(index as u8);
         self.up_values.push(UpValueInfo {
             id,
             name: SmolStr::new(name),
@@ -990,52 +1069,6 @@ struct UpValueInfo {
     /// Indicates where the up-value originated from, relative to the
     /// current local scope.
     origin: UpValueOrigin,
-}
-
-/// Indicates how far from the local scope the up-value originated.
-///
-/// An open up-value pointing to the immediate parent scope has its
-/// value in that parent's local variables.
-///
-/// An open up-value with a value from beyond that, has to point to
-/// the parent scope's up-value list.
-///
-/// During runtime, outer scopes are not guaranteed to be on the
-/// call stack when a closure is instantiated, because multiple
-/// closures can be nested and returned.
-///
-/// In this example z is local, y is an up-value in the parent's locals (origin `Parent`),
-/// and x is an up-value in the parent's up-values (origin `Outer`).
-///
-/// ```scheme
-/// (lambda (x)      ;; outer
-///   (lambda (y)    ;; parent
-///     (lambda (z)  ;; local
-///       (+ x y z)
-///   )))
-/// ```
-///
-/// Up-values from outer scopes are copied down into inner scopes,
-/// their handles shared so "closing" will reflect in all, effectively
-/// *flattening* the closures.
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum UpValueOrigin {
-    /// UpValue is located in parent's local variables.
-    Parent(LocalId),
-    /// UpValue is located in parent's up-value list.
-    Outer(UpValueId),
-}
-
-impl UpValueOrigin {
-    #[inline]
-    fn is_parent(&self) -> bool {
-        matches!(self, UpValueOrigin::Parent(_))
-    }
-
-    #[inline]
-    fn is_outer(&self) -> bool {
-        matches!(self, UpValueOrigin::Outer(_))
-    }
 }
 
 /// The context categorises a scope, or part of a scope, for implementing
