@@ -27,4 +27,6 @@
       (lambda (z)
         (+ x y z)
         ))))
-(assert (= (add-nested 1 2 3) 6))
+(assert (=
+          (((add-nested 13) 17) 19)
+          49))

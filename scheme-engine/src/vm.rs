@@ -29,8 +29,8 @@ struct CallFrame {
     stack_offset: usize,
 
     /// These are the *open* up-values belonging to all closures that have captured
-    /// local variables belonging to this call frame. They are shared with the closure's
-    /// heap space so that closing them reflects within the closure when it escapes.
+    /// local variables belonging to this call frame. They are shared with each closures'
+    /// heap space so that closing them reflects within those closures' when it escapes.
     ///
     /// Before this frame is popped off the call stack, all its captured locals must
     /// be copied into the up-values, and the up-values closed.
@@ -91,6 +91,13 @@ impl Vm {
         // The top frame in the stack is the previous, parent frame.
         self.frames.last()
     }
+
+    /// Prepare the machine to execute the given frame.
+    fn prepare(&mut self, frame: &CallFrame) {
+        // Prepare stack with space for local variables.
+        self.operand
+            .extend((0..frame.closure.borrow().proc.local_count).map(|_| Expr::Void));
+    }
 }
 
 /// Run the interpreter loop.
@@ -102,12 +109,13 @@ fn run_interpreter(vm: &mut Vm) -> Result<Expr> {
         .frames
         .pop()
         .expect("vm must have at least one call frame");
+    vm.prepare(&frame);
 
     loop {
         match run_instructions(vm, &mut frame)? {
             ProcAction::Call(closure, stack_offset) => {
                 let new_frame = CallFrame {
-                    closure,
+                    closure: closure.clone(),
                     stack_offset,
                     up_values: Vec::new(),
                     pc: 0,
@@ -115,6 +123,7 @@ fn run_interpreter(vm: &mut Vm) -> Result<Expr> {
 
                 let old_frame = mem::replace(&mut frame, new_frame);
                 vm.frames.push(old_frame);
+                vm.prepare(&frame);
             }
             ProcAction::TailCall => todo!("tail call"),
             ProcAction::Return(value) => {
@@ -177,7 +186,8 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
             }
 
             Op::Return => {
-                let value = vm.operand.pop().unwrap_or(Expr::Nil);
+                println!("return");
+                let value = vm.operand.pop().unwrap_or(Expr::Void);
 
                 // Close up-values.
                 for mut up_value_handle in frame.up_values.drain(..) {
@@ -193,15 +203,18 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
                 return Ok(ProcAction::Return(value));
             }
             Op::LoadEnvVar(symbol) => {
-                let value = env.get_var(symbol).cloned().unwrap_or(Expr::Nil);
+                println!("load env-var: {symbol:?}");
+                let value = env.get_var(symbol).cloned().unwrap_or(Expr::Void);
                 vm.operand.push(value);
             }
             Op::StoreEnvVar(symbol) => {
-                let value = vm.operand.last().cloned().unwrap_or(Expr::Nil);
+                println!("store env-var: {symbol:?}");
+                let value = vm.operand.last().cloned().unwrap_or(Expr::Void);
                 env.set_var(symbol, value)?;
                 // don't pop
             }
             Op::LoadUpValue(up_value_id) => {
+                println!("load up-value: {up_value_id:?}");
                 match closure.up_values[up_value_id.as_usize()].borrow().clone() {
                     UpValue::Open(stack_pos) => {
                         let value = vm.operand[stack_pos].clone();
@@ -220,12 +233,21 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
                     .operand
                     .get(frame.stack_offset + local_id.as_usize())
                     .cloned()
-                    .unwrap_or(Expr::Nil);
+                    .unwrap_or(Expr::Void);
+                println!(
+                    "load local var: {local_id:?}:{value:?}, stack pos {}",
+                    frame.stack_offset + local_id.as_usize()
+                );
                 vm.operand.push(value);
             }
             Op::StoreLocalVar(local_id) => {
-                let value = vm.operand.last().cloned().unwrap_or(Expr::Nil);
+                let value = vm.operand.last().cloned().unwrap_or(Expr::Void);
+                println!(
+                    "store local var: {local_id:?}:{value:?}, stack pos {}",
+                    frame.stack_offset + local_id.as_usize()
+                );
                 vm.operand[frame.stack_offset + local_id.as_usize()] = value;
+                println!("stack size: {}", vm.operand.len());
                 // don't pop
             }
             Op::PushConstant(constant_id) => {
@@ -234,10 +256,11 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
                     .constants
                     .get(constant_id.as_usize())
                     .cloned()
-                    .unwrap_or(Expr::Nil);
+                    .unwrap_or(Expr::Void);
                 vm.operand.push(value);
             }
             Op::Pop => {
+                println!("pop");
                 let _ = vm.operand.pop();
             }
             Op::CaptureValue(_) => {
@@ -269,6 +292,9 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
                                         frame.stack_offset + local_id.as_usize(),
                                     ));
                                     up_values.push(up_value.clone());
+
+                                    // Keep a handle to the up-value in the current frame,
+                                    // so it can be closed when the local goes out of scope.
                                     frame.up_values.push(up_value);
                                 }
                                 // Share a handle to an existing up-value.
@@ -303,7 +329,9 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
 
                 return match callable {
                     Expr::Closure(closure) => Ok(ProcAction::Call(closure.clone(), lo)),
-                    _ => Err(Error::Reason("invalid callable type".to_string())),
+                    invalid_callable => Err(Error::Reason(format!(
+                        "invalid callable type {invalid_callable:?}"
+                    ))),
                 };
             }
 
@@ -321,7 +349,7 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
                 let callable = &vm.operand[lo - 1];
                 let args = &vm.operand[lo..];
 
-                let value = match callable {
+                match callable {
                     // Native call does not unwind the Scheme call stack to push a frame.
                     //
                     // It simply calls into Rust from within the instruction loop.
@@ -342,7 +370,11 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
                         return Ok(ProcAction::Call(closure.clone(), lo));
                     }
                     Expr::Procedure(_) => todo!("other call types not implemented yet"),
-                    _ => return Err(Error::Reason("invalid callable type".to_string())),
+                    invalid_callable => {
+                        return Err(Error::Reason(format!(
+                            "invalid callable type {invalid_callable:?}"
+                        )))
+                    }
                 };
             }
             Op::End => {

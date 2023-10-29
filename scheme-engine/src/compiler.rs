@@ -104,6 +104,9 @@ impl Compiler {
             arity: 0,
             variadic: false,
             constants: proc.constants.into_boxed_slice(),
+            // Top-level procedure doesn't have local variables.
+            // Rather, variables are declared as global in the paired environment.
+            local_count: 0,
             // Top-level procedure doesn't close over anything, because
             // there is no outer scopes.
             up_value_count: 0,
@@ -978,6 +981,7 @@ impl ProcState {
             code,
             arity,
             variadic,
+            locals,
             constants,
             up_values,
             ..
@@ -988,6 +992,7 @@ impl ProcState {
             arity,
             variadic,
             constants: constants.into_boxed_slice(),
+            local_count: locals.len(),
             up_value_count: up_values.len(),
             env: env.downgrade(),
         }
