@@ -244,6 +244,7 @@ impl Compiler {
     }
 
     fn compile_end(&mut self) -> Result<()> {
+        self.proc.emit_op(Op::Return);
         self.proc.emit_op(Op::End);
         Ok(())
     }

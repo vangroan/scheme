@@ -123,7 +123,16 @@ fn run_interpreter(vm: &mut Vm) -> Result<Expr> {
                 // The closure that was called will be on the stack just below the arguments.
                 vm.operand.truncate(frame.stack_offset - 1);
 
-                return Ok(value);
+                match vm.frames.pop() {
+                    Some(prev_frame) => {
+                        frame = prev_frame;
+                        vm.operand.push(value);
+                        continue;
+                    }
+                    None => {
+                        return Ok(value);
+                    }
+                }
             }
         }
     }
@@ -169,6 +178,18 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
 
             Op::Return => {
                 let value = vm.operand.pop().unwrap_or(Expr::Nil);
+
+                // Close up-values.
+                for mut up_value_handle in frame.up_values.drain(..) {
+                    let up_value = &mut *up_value_handle.borrow_mut();
+                    if let UpValue::Open(stack_pos) = up_value {
+                        let value = vm.operand[*stack_pos].clone();
+                        up_value.close(value);
+                    }
+                }
+
+                println!("returning {value:?}");
+
                 return Ok(ProcAction::Return(value));
             }
             Op::LoadEnvVar(symbol) => {
@@ -244,9 +265,11 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
                                 // Create a new up-value pointing to a local variable
                                 // in the current scope.
                                 UpValueOrigin::Parent(local_id) => {
-                                    up_values.push(Handle::new(UpValue::Open(
+                                    let up_value = Handle::new(UpValue::Open(
                                         frame.stack_offset + local_id.as_usize(),
-                                    )));
+                                    ));
+                                    up_values.push(up_value.clone());
+                                    frame.up_values.push(up_value);
                                 }
                                 // Share a handle to an existing up-value.
                                 UpValueOrigin::Outer(up_value_id) => {
@@ -270,6 +293,8 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
                 vm.operand.push(Expr::Closure(closure_handle));
             }
             Op::CallClosure { arity } => {
+                println!("call closure, arity {arity}");
+
                 let lo = vm.operand.len() - arity as usize;
 
                 // The value just below the arguments is expected to hold the callable.
@@ -287,6 +312,8 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
             // The stack must be prepared with a variable holding the function pointer,
             // followed by all the arguments to be passed to the call.
             Op::CallNative { arity } => {
+                println!("call native, arity {arity}");
+
                 // TODO: Support variadic procedures
                 let lo = vm.operand.len() - arity as usize;
 
@@ -319,8 +346,7 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
                 };
             }
             Op::End => {
-                let value = vm.operand.pop().unwrap_or(Expr::Nil);
-                return Ok(ProcAction::Return(value));
+                unreachable!("end")
             }
         }
     }
