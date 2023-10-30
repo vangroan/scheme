@@ -154,8 +154,6 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
     // Pull relevant state into flat local variables to reduce the
     // overhead of jumping pointers and bookkeeping of borrowing objects.
     let mut closure_rc = frame.closure.clone();
-    // let closure_ref = closure_rc.borrow_mut();
-    // let proc_rc = closure_ref.procedure().clone();
     let proc_rc = closure_rc.borrow().procedure_rc().clone();
     let proc = &*proc_rc;
     let closure = &mut *closure_rc.borrow_mut();
