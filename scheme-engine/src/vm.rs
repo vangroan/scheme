@@ -287,6 +287,10 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
                             match origin {
                                 // Create a new up-value pointing to a local variable
                                 // in the current scope.
+                                //
+                                // Be mindful of terminology here.
+                                // The current running closure is the *parent* of the child closure
+                                // that is being spawned right now.
                                 UpValueOrigin::Parent(local_id) => {
                                     let up_value = Handle::new(UpValue::Open(
                                         frame.stack_offset + local_id.as_usize(),
