@@ -102,7 +102,7 @@ impl Compiler {
             // Rather, variables are declared as global in the paired environment.
             local_count: 0,
             // Top-level procedure doesn't close over anything, because
-            // there is no outer scopes.
+            // there are no outer scopes.
             up_value_count: 0,
             // By storing the procedure in the environment
             // we've created a circular reference.
