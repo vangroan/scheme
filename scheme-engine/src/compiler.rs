@@ -6,7 +6,7 @@ use smol_str::SmolStr;
 use crate::declare_id;
 use crate::env::{ConstantId, Env, LocalId, UpValueId};
 use crate::error::{Error, Result};
-use crate::expr::{Closure, Expr, Keyword, Proc};
+use crate::expr::{Closure, Expr, Keyword, Proc, Signature};
 use crate::handle::Handle;
 use crate::limits::*;
 use crate::opcode::{Op, UpValueOrigin};
@@ -100,9 +100,8 @@ impl Compiler {
         // suitable for the virtual machine.
         let proc = Proc {
             code: proc.code.into_boxed_slice(),
-            // The top level procedures never take arguments.
-            arity: 0,
-            variadic: false,
+            // Top-level procedures never take arguments.
+            sig: Signature::empty(),
             constants: proc.constants.into_boxed_slice(),
             // Top-level procedure doesn't have local variables.
             // Rather, variables are declared as global in the paired environment.
@@ -563,7 +562,7 @@ impl Compiler {
                     // The parameters may be followed by a dot(.) keyword, after
                     // which the "rest" parameters will be bound as a list.
                     Expr::List(list) => {
-                        compiler.proc.arity = 0;
+                        compiler.proc.sig.arity = 0;
                         let mut variadic: bool = false;
 
                         for param in list {
@@ -577,7 +576,7 @@ impl Compiler {
                                     if variadic {
                                         break;
                                     } else {
-                                        compiler.proc.arity += 1;
+                                        compiler.proc.sig.arity += 1;
                                     }
                                 }
                                 Expr::Keyword(Keyword::Dot) => {
@@ -936,8 +935,7 @@ fn find_up_value_mut(
 struct ProcState {
     /// Generated result bytecode.
     code: Vec<Op>,
-    arity: usize,
-    variadic: bool,
+    sig: Signature,
     locals: Vec<Local>,
     constants: Vec<Expr>,
     /// List of variables in an outer scope.
@@ -948,8 +946,7 @@ impl ProcState {
     fn new() -> Self {
         Self {
             code: Vec::new(),
-            arity: 0,
-            variadic: false,
+            sig: Signature::empty(),
             locals: Vec::new(),
             constants: Vec::new(),
             up_values: Vec::new(),
@@ -979,8 +976,7 @@ impl ProcState {
 
         let Self {
             code,
-            arity,
-            variadic,
+            sig,
             locals,
             constants,
             up_values,
@@ -989,8 +985,7 @@ impl ProcState {
 
         Proc {
             code: code.into_boxed_slice(),
-            arity,
-            variadic,
+            sig,
             constants: constants.into_boxed_slice(),
             local_count: locals.len(),
             up_value_count: up_values.len(),
