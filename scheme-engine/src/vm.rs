@@ -226,7 +226,15 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
                 }
             }
             Op::StoreUpValue(up_value_id) => {
-                todo!()
+                let value = vm.operand.last().cloned().unwrap_or(Expr::Void);
+                match &mut *closure.up_values[up_value_id.as_usize()].borrow_mut() {
+                    UpValue::Open(stack_pos) => {
+                        vm.operand[*stack_pos] = value;
+                    }
+                    UpValue::Closed(up_value) => {
+                        *up_value = value;
+                    }
+                }
             }
             Op::LoadLocalVar(local_id) => {
                 let value = vm
