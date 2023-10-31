@@ -35,7 +35,7 @@ impl<'a> ExprRepr<'a> {
 impl<'a> fmt::Display for ExprRepr<'a> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self.expr {
-            Expr::Nil => write!(f, "'()"),
+            Expr::Nil => write!(f, "()"),
             Expr::Bool(boolean) => {
                 if *boolean {
                     write!(f, "#t")

@@ -26,6 +26,8 @@ pub fn init_core(env: &mut Env) -> Result<()> {
     env.bind_native_func("or", boolean_or)?;
 
     env.bind_native_func("pair?", pair_is_pair)?;
+    env.bind_native_func("list?", pair_is_list)?;
+    env.bind_native_func("list", pair_list)?;
     env.bind_native_func("cons", pair_cons)?;
     env.bind_native_func("car", pair_car)?;
     env.bind_native_func("cdr", pair_cdr)?;
@@ -298,43 +300,48 @@ fn boolean_or(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
 // ----------------------------------------------------------------------------
 // Pair
 
-/// Creates a pair from two arguments.
+/// Checks if the given argument is a pair.
 fn pair_is_pair(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
-    match args {
-        [arg0] => match arg0 {
-            Expr::Pair(_) => Ok(Expr::Bool(true)),
-            _ => Ok(Expr::Bool(false)),
-        },
-        [..] => wrong_arg_count!(),
-    }
+    let arg1 = args1(args)?;
+    Ok(Expr::Bool(matches!(arg1, Expr::Pair(_))))
+}
+
+fn pair_is_list(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
+    let arg1 = args1(args)?;
+
+    todo!()
+}
+
+/// Creates a new valid list from the given arguments.
+fn pair_list(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
+    // Nil is the empty list '()
+    Ok(Pair::new_list(args)
+        .map(|pair| pair.to_expr())
+        .unwrap_or(Expr::Nil))
 }
 
 /// Creates a pair from two arguments.
 fn pair_cons(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
-    match args {
-        [arg0, arg1] => Ok(Pair(arg0.clone(), arg1.clone()).to_expr()),
-        [..] => wrong_arg_count!(),
-    }
+    let [arg1, arg2] = args2(args)?;
+    Ok(Pair(arg1.clone(), arg2.clone()).to_expr())
 }
 
 /// Retrieve the first element of a pair.
 fn pair_car(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
-    match args {
-        [arg0] => match arg0 {
-            Expr::Pair(pair_handle) => Ok(pair_handle.borrow().0.clone()),
-            _ => unexpected_type!("pair"),
-        },
-        [..] => wrong_arg_count!(),
+    let arg1 = args1(args)?;
+
+    match arg1 {
+        Expr::Pair(pair_handle) => Ok(pair_handle.borrow().0.clone()),
+        _ => unexpected_type!("pair"),
     }
 }
 
 /// Retrieve the second element of a pair.
 fn pair_cdr(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
-    match args {
-        [arg0] => match arg0 {
-            Expr::Pair(pair_handle) => Ok(pair_handle.borrow().1.clone()),
-            _ => unexpected_type!("pair"),
-        },
-        [..] => wrong_arg_count!(),
+    let arg1 = args1(args)?;
+
+    match arg1 {
+        Expr::Pair(pair_handle) => Ok(pair_handle.borrow().1.clone()),
+        _ => unexpected_type!("pair"),
     }
 }

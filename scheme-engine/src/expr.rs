@@ -41,11 +41,11 @@ impl Pair {
         (&self.0, &self.1)
     }
 
-    pub const fn car(&self) -> &Expr {
+    pub const fn head(&self) -> &Expr {
         &self.0
     }
 
-    pub const fn cdr(&self) -> &Expr {
+    pub const fn rest(&self) -> &Expr {
         &self.1
     }
 
