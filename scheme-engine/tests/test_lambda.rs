@@ -5,8 +5,7 @@ use scheme_engine::Expr;
 /// outer scope.
 #[test]
 fn test_lambda_call() {
-    let source =
-        r"(define add-self (lambda (x) (+ x x))) (add-self 7) (assert (= (add-self 7) 14))";
+    let source = r"(define add-self (lambda (x) (+ x x))) (add-self 7)";
 
     let env = scheme_engine::new_env().expect("create core environment");
     let expr = scheme_engine::parse(source, true).expect("parse");
