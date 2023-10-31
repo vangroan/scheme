@@ -47,7 +47,14 @@ fn test_define() {
 
 #[test]
 fn test_lambda() {
-    let (env, closure) = compile_closure_env(include_str!("language/lambda.scm"))
+    let (_env, closure) = compile_closure_env(include_str!("language/lambda.scm"))
+        .expect("compiling closure and environment");
+    let _ = scheme_engine::eval(closure).expect("evaluation");
+}
+
+#[test]
+fn test_pair() {
+    let (_env, closure) = compile_closure_env(include_str!("language/pair.scm"))
         .expect("compiling closure and environment");
     let _ = scheme_engine::eval(closure).expect("evaluation");
 }

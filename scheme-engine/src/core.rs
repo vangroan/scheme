@@ -2,7 +2,7 @@
 
 use crate::env::Env;
 use crate::error::{Error, Result};
-use crate::expr::Expr;
+use crate::expr::{Expr, Pair};
 
 pub fn init_core(env: &mut Env) -> Result<()> {
     env.bind_native_func("assert", ext_assert)?;
@@ -24,6 +24,11 @@ pub fn init_core(env: &mut Env) -> Result<()> {
     env.bind_native_func("not", boolean_not)?;
     env.bind_native_func("and", boolean_and)?;
     env.bind_native_func("or", boolean_or)?;
+
+    env.bind_native_func("pair?", pair_is_pair)?;
+    env.bind_native_func("cons", pair_cons)?;
+    env.bind_native_func("car", pair_car)?;
+    env.bind_native_func("cdr", pair_cdr)?;
 
     Ok(())
 }
@@ -138,8 +143,6 @@ fn number_is_number(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
 }
 
 fn number_add(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
-    // println!("number_add({:?})", args);
-
     let mut sum: f64 = 0.0;
 
     for (index, arg) in args.iter().enumerate() {
@@ -153,13 +156,11 @@ fn number_add(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
         }
     }
 
-    // println!("number_add -> {sum}");
+    println!("number_add -> {sum}");
     Ok(Expr::Number(sum))
 }
 
 fn number_sub(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
-    // println!("number_sub({:?})", args);
-
     let mut sum: f64 = args
         .get(0)
         .ok_or_else(|| Error::Reason("wrong number of arguments passed to procedure".to_string()))?
@@ -292,4 +293,48 @@ fn boolean_and(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
 
 fn boolean_or(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
     todo!()
+}
+
+// ----------------------------------------------------------------------------
+// Pair
+
+/// Creates a pair from two arguments.
+fn pair_is_pair(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
+    match args {
+        [arg0] => match arg0 {
+            Expr::Pair(_) => Ok(Expr::Bool(true)),
+            _ => Ok(Expr::Bool(false)),
+        },
+        [..] => wrong_arg_count!(),
+    }
+}
+
+/// Creates a pair from two arguments.
+fn pair_cons(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
+    match args {
+        [arg0, arg1] => Ok(Pair(arg0.clone(), arg1.clone()).to_expr()),
+        [..] => wrong_arg_count!(),
+    }
+}
+
+/// Retrieve the first element of a pair.
+fn pair_car(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
+    match args {
+        [arg0] => match arg0 {
+            Expr::Pair(pair_handle) => Ok(pair_handle.borrow().0.clone()),
+            _ => unexpected_type!("pair"),
+        },
+        [..] => wrong_arg_count!(),
+    }
+}
+
+/// Retrieve the second element of a pair.
+fn pair_cdr(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
+    match args {
+        [arg0] => match arg0 {
+            Expr::Pair(pair_handle) => Ok(pair_handle.borrow().1.clone()),
+            _ => unexpected_type!("pair"),
+        },
+        [..] => wrong_arg_count!(),
+    }
 }
