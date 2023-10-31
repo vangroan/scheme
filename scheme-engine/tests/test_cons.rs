@@ -23,14 +23,26 @@ fn test_make_list() {
     println!("{list:?}");
     println!("{}", Expr::Pair(Handle::new(list)).repr());
 
-    let list = Pair::new_list_vec(vec![Expr::Number(1.0), Expr::Number(2.0)]).unwrap();
-    println!("{list:?}");
-    println!("{}", Expr::Pair(Handle::new(list)).repr());
-
     let list = Pair::new(
         Expr::Number(1.0),
         Expr::Pair(Handle::new(Pair::new(Expr::Number(2.0), Expr::Number(3.0)))),
     );
     println!("{list:?}");
     println!("{}", Expr::Pair(Handle::new(list)).repr());
+}
+
+#[test]
+fn test_make_list_from_vec() {
+    let a = Pair::new_list_vec(vec![Expr::Number(1.0), Expr::Number(2.0)]).unwrap();
+    println!("{a:?}");
+    println!("{}", Expr::Pair(Handle::new(a)).repr());
+
+    let b = Pair::new_list_vec(vec![
+        Expr::Number(1.0),
+        Expr::Number(2.0),
+        Expr::Number(3.0),
+    ])
+    .unwrap();
+    println!("{b:?}");
+    println!("{}", Expr::Pair(Handle::new(b)).repr());
 }

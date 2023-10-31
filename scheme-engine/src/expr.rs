@@ -74,20 +74,22 @@ impl Pair {
     pub fn new_list_vec(mut elements: Vec<Expr>) -> Option<Pair> {
         // It's more performant to pop elements off the back of a vector.
         elements.reverse();
+        Pair::new_list_vec_recursive(elements.pop(), elements)
+    }
 
-        let mut maybe_pair: Option<Pair> = None;
-
-        while let Some(expr) = elements.pop() {
-            match maybe_pair {
-                Some(ref mut pair) => {
-                    let tail = Pair(expr, Expr::Nil);
-                    pair.set_tail(Expr::Pair(Handle::new(tail)))
-                }
-                None => maybe_pair = Some(Pair(expr, Expr::Nil)),
-            }
+    fn new_list_vec_recursive(
+        maybe_head: Option<Expr>,
+        mut rest_reversed: Vec<Expr>,
+    ) -> Option<Pair> {
+        match maybe_head {
+            Some(head) => Some(Pair(
+                head,
+                Pair::new_list_vec_recursive(rest_reversed.pop(), rest_reversed)
+                    .map(Pair::to_expr)
+                    .unwrap_or(Expr::Nil),
+            )),
+            None => None,
         }
-
-        maybe_pair
     }
 }
 
