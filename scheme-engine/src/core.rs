@@ -308,8 +308,7 @@ fn pair_is_pair(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
 
 fn pair_is_list(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
     let arg1 = args1(args)?;
-
-    todo!()
+    Ok(Expr::Bool(Pair::is_list(arg1)))
 }
 
 /// Creates a new valid list from the given arguments.

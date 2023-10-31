@@ -91,6 +91,20 @@ impl Pair {
             None => None,
         }
     }
+
+    pub(crate) fn is_list(expr: &Expr) -> bool {
+        match expr {
+            Expr::Pair(pair_handle) => {
+                let pair = pair_handle.borrow();
+                let rest = pair.rest();
+                match rest {
+                    Expr::Nil => true,
+                    _ => Pair::is_list(rest),
+                }
+            }
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
