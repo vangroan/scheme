@@ -182,6 +182,14 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
             Op::PushFalse => {
                 vm.operand.push(Expr::Bool(false));
             }
+            Op::JumpFalse(addr) => {
+                if let Some(Expr::Bool(false)) = vm.operand.last() {
+                    pc = addr.as_usize();
+                }
+            }
+            Op::Jump(addr) => {
+                pc = addr.as_usize();
+            }
 
             Op::Return => {
                 println!("return");

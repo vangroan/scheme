@@ -2,7 +2,7 @@
 
 use crate::env::Env;
 use crate::error::{Error, Result};
-use crate::expr::Expr;
+use crate::expr::{Expr, Pair};
 
 pub fn init_core(env: &mut Env) -> Result<()> {
     env.bind_native_func("assert", ext_assert)?;
@@ -14,13 +14,62 @@ pub fn init_core(env: &mut Env) -> Result<()> {
     env.bind_native_func("-", number_sub)?;
     env.bind_native_func("*", number_mul)?;
     env.bind_native_func("=", number_eq)?;
+    env.bind_native_func("<", number_lt)?;
+    env.bind_native_func(">", number_gt)?;
+    env.bind_native_func("<=", number_lt_eq)?;
+    env.bind_native_func(">=", number_gt_eq)?;
 
     env.bind_native_func("boolean?", boolean_is_boolean)?;
     env.bind_native_func("not", boolean_not)?;
     env.bind_native_func("and", boolean_and)?;
     env.bind_native_func("or", boolean_or)?;
 
+    env.bind_native_func("pair?", pair_is_pair)?;
+    env.bind_native_func("list?", pair_is_list)?;
+    env.bind_native_func("list", pair_list)?;
+    env.bind_native_func("cons", pair_cons)?;
+    env.bind_native_func("car", pair_car)?;
+    env.bind_native_func("cdr", pair_cdr)?;
+
     Ok(())
+}
+
+macro_rules! unexpected_type {
+    ($expected:expr) => {
+        Err(Error::Reason(format!(
+            "expected argument to be a {}",
+            $expected
+        )))
+    };
+}
+
+macro_rules! wrong_arg_count {
+    () => {
+        Err(Error::Reason(
+            "wrong number of arguments passed to procedure".to_string(),
+        ))
+    };
+}
+
+fn args1(args: &[Expr]) -> Result<&Expr> {
+    match args {
+        [arg1] => Ok(arg1),
+        [..] => wrong_arg_count!(),
+    }
+}
+
+fn args2(args: &[Expr]) -> Result<[&Expr; 2]> {
+    match args {
+        [arg1, arg2] => Ok([arg1, arg2]),
+        [..] => wrong_arg_count!(),
+    }
+}
+
+fn args2_numbers(args: &[Expr]) -> Result<[f64; 2]> {
+    match args {
+        [Expr::Number(arg1), Expr::Number(arg2)] => Ok([*arg1, *arg2]),
+        [..] => wrong_arg_count!(),
+    }
 }
 
 /// There is no assert in Scheme. This is our own extension to assist with unit testing.
@@ -53,14 +102,11 @@ fn ext_assert(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
 }
 
 fn display(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
-    // TODO: Proper external representation, and not Rust `Debug`
-    let arg0 = args.get(0).ok_or_else(|| {
-        Error::Reason("wrong number of arguments passed to procedure".to_string())
-    })?;
+    let arg0 = args1(args)?;
+    let repr = arg0.repr();
 
-    print!("{arg0:?}");
+    print!("{repr}");
 
-    // TODO: Display evaluates to nothing, like define?
     Ok(Expr::Void)
 }
 
@@ -68,7 +114,6 @@ fn newline(_env: &mut Env, _args: &[Expr]) -> Result<Expr> {
     // TODO: Output port argument
     println!();
 
-    // TODO: Display evaluates to nothing, like define?
     Ok(Expr::Void)
 }
 
@@ -168,6 +213,26 @@ fn number_eq(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
     Ok(Expr::Bool(true))
 }
 
+fn number_lt(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
+    let [arg1, arg2] = args2_numbers(args)?;
+    Ok(Expr::Bool(arg1 < arg2))
+}
+
+fn number_gt(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
+    let [arg1, arg2] = args2_numbers(args)?;
+    Ok(Expr::Bool(arg1 > arg2))
+}
+
+fn number_lt_eq(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
+    let [arg1, arg2] = args2_numbers(args)?;
+    Ok(Expr::Bool(arg1 <= arg2))
+}
+
+fn number_gt_eq(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
+    let [arg1, arg2] = args2_numbers(args)?;
+    Ok(Expr::Bool(arg1 >= arg2))
+}
+
 // ----------------------------------------------------------------------------
 // Boolean
 
@@ -212,4 +277,52 @@ fn boolean_and(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
 
 fn boolean_or(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
     todo!()
+}
+
+// ----------------------------------------------------------------------------
+// Pair
+
+/// Checks if the given argument is a pair.
+fn pair_is_pair(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
+    let arg1 = args1(args)?;
+    Ok(Expr::Bool(matches!(arg1, Expr::Pair(_))))
+}
+
+fn pair_is_list(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
+    let arg1 = args1(args)?;
+    Ok(Expr::Bool(Pair::is_list(arg1)))
+}
+
+/// Creates a new valid list from the given arguments.
+fn pair_list(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
+    // Nil is the empty list '()
+    Ok(Pair::new_list(args)
+        .map(|pair| pair.to_expr())
+        .unwrap_or(Expr::Nil))
+}
+
+/// Creates a pair from two arguments.
+fn pair_cons(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
+    let [arg1, arg2] = args2(args)?;
+    Ok(Pair(arg1.clone(), arg2.clone()).to_expr())
+}
+
+/// Retrieve the first element of a pair.
+fn pair_car(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
+    let arg1 = args1(args)?;
+
+    match arg1 {
+        Expr::Pair(pair_handle) => Ok(pair_handle.borrow().0.clone()),
+        _ => unexpected_type!("pair"),
+    }
+}
+
+/// Retrieve the second element of a pair.
+fn pair_cdr(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
+    let arg1 = args1(args)?;
+
+    match arg1 {
+        Expr::Pair(pair_handle) => Ok(pair_handle.borrow().1.clone()),
+        _ => unexpected_type!("pair"),
+    }
 }

@@ -19,6 +19,14 @@ fn test_booleans() {
 }
 
 #[test]
+fn test_conditionals() {
+    let (_env, closure) = compile_closure_env(include_str!("language/conditionals.scm"))
+        .expect("compiling closure and environment");
+    let value = scheme_engine::eval(closure).expect("evaluation");
+    println!("Result value: {:?}", value);
+}
+
+#[test]
 fn test_numbers() {
     let (_env, closure) = compile_closure_env(include_str!("language/number.scm"))
         .expect("compiling closure and environment");

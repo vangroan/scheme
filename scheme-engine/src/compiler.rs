@@ -9,7 +9,7 @@ use crate::error::{Error, Result};
 use crate::expr::{Closure, Expr, Keyword, Proc, Signature};
 use crate::handle::Handle;
 use crate::limits::*;
-use crate::opcode::{Op, UpValueOrigin};
+use crate::opcode::{JumpAddr, Op, UpValueOrigin};
 use crate::symbol::SymbolId;
 
 /// Compiles the given top-level expression into bytecode.
@@ -320,6 +320,10 @@ impl Compiler {
                 "fluid-let" => {
                     todo!("fluid-let form")
                 }
+                "if" => {
+                    self.compile_if_form(rest, false)?;
+                    Ok(true)
+                }
                 "set!" => {
                     todo!("set! form")
                 }
@@ -551,6 +555,66 @@ impl Compiler {
                 "ill-formed special form: lambda expects formal parameters followed by a body"
                     .to_string(),
             ))
+        }
+    }
+
+    /// Compile the `if` special form.
+    ///
+    /// First the `<test>` expression is evaluated. If the result is truthy,
+    /// then the `<consequent>` expression is evaluated. If the result is
+    /// false, then the `<alternate>` expression is evaluated.
+    ///
+    /// In the form where there is no `<alternate>` expression, and the test
+    /// results in false, then the result is `#!void`.
+    ///
+    /// Of all the Scheme values, only `#f` counts as false in conditional
+    /// expressions. All other Scheme values, including `#t`, count as true.
+    ///
+    /// ```scheme
+    /// (if <test> <consequent> <alternate>)
+    /// (if <test> <consequent>)
+    /// ```
+    ///
+    /// # Tail Calls
+    ///
+    /// TODO: Handle proper tail calls for branches.
+    fn compile_if_form(&mut self, rest: &[Expr], is_last: bool) -> Result<()> {
+        match rest {
+            [test_expr, consequent, alternate] => {
+                // <test>
+                self.compile_expr(test_expr)?;
+
+                // The start of the <alternate> bytecode can only be determined
+                // when the <consequent> is completely emitted.
+                let test_jump_index = self.proc.reserve_op(Op::JumpFalse(JumpAddr::zero()));
+                self.proc.emit_op(Op::Pop); // <test> result
+
+                // <consequent>
+                self.compile_expr(consequent)?;
+
+                // Jump over the <alternate>.
+                // TODO: Tail calls for conditionals.
+                let end_jump_index = self.proc.reserve_op(Op::Jump(JumpAddr::zero()));
+
+                // <alternate>
+                let alternate_addr = self.proc.next_op_addr();
+                self.proc
+                    .patch_op(test_jump_index, Op::JumpFalse(alternate_addr));
+                self.proc.emit_op(Op::Pop); // <test> result
+
+                self.compile_expr(alternate)?;
+
+                // The end of the <consequent> block must jump to the end of <alternate>
+                // to avoid a true test falling through to the wrong block.
+                let alternate_end = self.proc.next_op_addr();
+                self.proc.patch_op(end_jump_index, Op::Jump(alternate_end));
+
+                Ok(())
+            }
+            [_test_expr, _consequent] => {
+                todo!()
+            }
+            [..] => Err(Error::Reason("ill-formed special form".to_string())),
         }
     }
 
@@ -810,6 +874,11 @@ impl ProcState {
             constants: Vec::new(),
             up_values: Vec::new(),
         }
+    }
+
+    fn next_op_addr(&self) -> JumpAddr {
+        let next_index = self.code.len();
+        JumpAddr::new(next_index)
     }
 
     fn emit_op(&mut self, op: Op) {

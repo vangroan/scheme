@@ -1,4 +1,5 @@
 use crate::env::{ConstantId, LocalId, ProcId, UpValueId};
+use crate::limits::*;
 use crate::symbol::SymbolId;
 
 #[derive(Debug, Clone)]
@@ -15,6 +16,12 @@ pub enum Op {
 
     /// Remove and discard the top value off the stack.
     Pop,
+
+    /// Jump to the specified absolute address if the top stack value is #f
+    JumpFalse(JumpAddr),
+
+    /// Unconditional jump to the specified absolute address.
+    Jump(JumpAddr),
 
     /// Return from a procedure call.
     Return,
@@ -67,6 +74,31 @@ pub enum Op {
 
     /// End of bytecode sentinel.
     End,
+}
+
+/// Absolute bytecode address for jumps.
+#[derive(Debug, Clone)]
+pub struct JumpAddr(pub(crate) [u8; 3]);
+
+impl JumpAddr {
+    pub(crate) fn new(index: usize) -> JumpAddr {
+        if index >= MAX_JUMP_ADDR {
+            panic!("maximum jump address size of {MAX_JUMP_ADDR_BITS} bits exceeded")
+        }
+
+        let [a, b, c, ..] = index.to_le_bytes();
+        JumpAddr([a, b, c])
+    }
+
+    /// Create a jump to address 0.
+    pub(crate) const fn zero() -> JumpAddr {
+        JumpAddr([0; 3])
+    }
+
+    pub fn as_usize(&self) -> usize {
+        let [a, b, c] = self.0;
+        usize::from_le_bytes([a, b, c, 0, 0, 0, 0, 0])
+    }
 }
 
 /// Indicates how far from the local scope the up-value originated.
@@ -127,5 +159,14 @@ mod test {
             std::mem::size_of::<Op>(),
             std::mem::size_of::<Op>() * 8
         );
+    }
+
+    #[test]
+    fn test_jump_addr() {
+        let addr = JumpAddr::new(787199);
+        assert_eq!(addr.0, [255, 2, 12]);
+
+        let index = addr.as_usize();
+        assert_eq!(index, 787199);
     }
 }
