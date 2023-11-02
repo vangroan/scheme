@@ -38,9 +38,11 @@ macro_rules! unexpected_type {
 
 macro_rules! wrong_arg_count {
     () => {
-        Err(Error::Reason(
-            "wrong number of arguments passed to procedure".to_string(),
-        ))
+        Err(Error::Reason(format!(
+            "[{}:{}] wrong number of arguments passed to procedure",
+            file!(),
+            line!()
+        )))
     };
 }
 
@@ -59,6 +61,7 @@ fn args2(args: &[Expr]) -> Result<[&Expr; 2]> {
 }
 
 fn args2_numbers(args: &[Expr]) -> Result<[f64; 2]> {
+    println!("args2_numbers({:?})", args);
     match args {
         [Expr::Number(arg1), Expr::Number(arg2)] => Ok([*arg1, *arg2]),
         [..] => wrong_arg_count!(),
@@ -121,6 +124,8 @@ fn number_is_number(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
 }
 
 fn number_add(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
+    println!("number_add({:?})", args);
+
     let mut sum: f64 = 0.0;
 
     for (index, arg) in args.iter().enumerate() {
@@ -139,6 +144,8 @@ fn number_add(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
 }
 
 fn number_sub(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
+    println!("number_sub({:?})", args);
+
     let mut sum: f64 = args
         .get(0)
         .ok_or_else(|| Error::Reason("wrong number of arguments passed to procedure".to_string()))?
@@ -217,6 +224,7 @@ fn number_gt(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
 }
 
 fn number_lt_eq(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
+    println!("number_lt_eq({:?})", args);
     let [arg1, arg2] = args2_numbers(args)?;
     Ok(Expr::Bool(arg1 <= arg2))
 }

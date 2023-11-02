@@ -67,6 +67,11 @@ impl Env {
         }
     }
 
+    pub fn lookup_var(&self, name: &str) -> Option<&Expr> {
+        self.resolve_var(name)
+            .and_then(|symbol| self.get_var(symbol))
+    }
+
     pub fn resolve_var(&self, name: &str) -> Option<SymbolId> {
         self.variables.resolve(name)
     }

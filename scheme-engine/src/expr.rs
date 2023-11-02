@@ -77,6 +77,13 @@ impl Expr {
         }
     }
 
+    pub fn as_closure(&self) -> Option<&Handle<Closure>> {
+        match self {
+            Expr::Closure(handle) => Some(handle),
+            _ => None,
+        }
+    }
+
     #[inline]
     pub fn repr(&self) -> ExprRepr {
         ExprRepr { expr: self }

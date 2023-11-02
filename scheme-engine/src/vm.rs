@@ -13,6 +13,13 @@ pub fn eval(closure: Handle<Closure>) -> Result<Expr> {
     result
 }
 
+pub fn call(closure: Handle<Closure>, args: &[Expr]) -> Result<Expr> {
+    let mut vm = Vm::new();
+    let result = vm.run_args(closure, args);
+    println!("VM eval stack: {:?}", vm.operand);
+    result
+}
+
 struct Vm {
     /// The operand stack.
     operand: Vec<Expr>,
@@ -60,6 +67,10 @@ impl Vm {
     }
 
     fn run(&mut self, closure: Handle<Closure>) -> Result<Expr> {
+        self.run_args(closure, &[])
+    }
+
+    fn run_args(&mut self, closure: Handle<Closure>, args: &[Expr]) -> Result<Expr> {
         if !self.frames.is_empty() {
             // The machine is already executing something, so
             // a new closure cannot be called.
@@ -74,9 +85,16 @@ impl Vm {
         // to this closure on the stack.
         self.operand.push(Expr::Closure(closure.clone()));
 
+        for arg in args {
+            self.operand.push(arg.clone());
+        }
+
+        // Arguments and local variables start right after the closure value.
+        let stack_offset = self.operand.len() - args.len();
+
         self.frames.push(CallFrame {
             closure,
-            stack_offset: self.operand.len(),
+            stack_offset,
             up_values: Vec::new(),
             pc: 0,
         });
@@ -139,6 +157,8 @@ fn run_interpreter(vm: &mut Vm) -> Result<Expr> {
                         continue;
                     }
                     None => {
+                        debug_assert!(vm.operand.is_empty(), "when evaluation is done only the initial closure must be left on the stack");
+                        vm.operand.clear();
                         return Ok(value);
                     }
                 }
@@ -402,8 +422,8 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
     }
 }
 
-/// Call a procedure or native function.
-#[inline]
-fn call(vm: &mut Vm) -> Result<ProcAction> {
-    todo!()
-}
+// Call a procedure or native function.
+// #[inline]
+// fn call(vm: &mut Vm) -> Result<ProcAction> {
+//     todo!()
+// }
