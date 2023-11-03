@@ -61,7 +61,7 @@ fn args2(args: &[Expr]) -> Result<[&Expr; 2]> {
 }
 
 fn args2_numbers(args: &[Expr]) -> Result<[f64; 2]> {
-    println!("args2_numbers({:?})", args);
+    // println!("args2_numbers({:?})", args);
     match args {
         [Expr::Number(arg1), Expr::Number(arg2)] => Ok([*arg1, *arg2]),
         [..] => wrong_arg_count!(),
@@ -124,7 +124,7 @@ fn number_is_number(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
 }
 
 fn number_add(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
-    println!("number_add({:?})", args);
+    // println!("number_add({:?})", args);
 
     let mut sum: f64 = 0.0;
 
@@ -139,12 +139,12 @@ fn number_add(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
         }
     }
 
-    println!("number_add -> {sum}");
+    // println!("number_add -> {sum}");
     Ok(Expr::Number(sum))
 }
 
 fn number_sub(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
-    println!("number_sub({:?})", args);
+    // println!("number_sub({:?})", args);
 
     let mut sum: f64 = args
         .get(0)
@@ -160,7 +160,7 @@ fn number_sub(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
     let rest = &args[1..];
 
     for (index, arg) in rest.iter().enumerate() {
-        println!("arg [{index}] {arg:?}; sum -> {sum}");
+        // println!("arg [{index}] {arg:?}; sum -> {sum}");
         match arg {
             Expr::Number(number) => sum -= number,
             _ => {
@@ -171,7 +171,7 @@ fn number_sub(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
         }
     }
 
-    println!("number_sub -> {sum}");
+    // println!("number_sub -> {sum}");
     Ok(Expr::Number(sum))
 }
 
@@ -224,7 +224,7 @@ fn number_gt(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
 }
 
 fn number_lt_eq(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
-    println!("number_lt_eq({:?})", args);
+    // println!("number_lt_eq({:?})", args);
     let [arg1, arg2] = args2_numbers(args)?;
     Ok(Expr::Bool(arg1 <= arg2))
 }

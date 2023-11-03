@@ -2,7 +2,7 @@ use scheme_engine::Expr;
 
 #[test]
 fn test_call_closure() {
-    let source = include_str!("fib.scm");
+    let source = include_str!("test_fibonacci.scm");
     let env = scheme_engine::new_env().unwrap();
     let expr = scheme_engine::parse(source, true).unwrap();
     let program = scheme_engine::compile(env.clone(), &expr).unwrap();

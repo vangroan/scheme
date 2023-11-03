@@ -5,15 +5,17 @@ fn fibonacci_benchmark(c: &mut Criterion) {
     let source = include_str!("fibonacci.scm");
     let env = scheme_engine::new_env().unwrap();
     let expr = scheme_engine::parse(source, true).unwrap();
-    let _program = scheme_engine::compile(env.clone(), &expr).unwrap();
+    let program = scheme_engine::compile(env.clone(), &expr).unwrap();
 
-    let symbol = env.borrow().resolve_var("fib").unwrap();
+    // Run program to define variables.
+    scheme_engine::eval(program).expect("evaluating top-level fibonacci program");
+
     let fibonacci = env
         .borrow()
-        .get_var(symbol)
-        .unwrap()
+        .lookup_var("fib")
+        .expect("variable 'fib' not found")
         .as_closure()
-        .unwrap()
+        .expect("variable is not a closure")
         .clone();
     let args: Vec<Expr> = vec![Expr::Number(20.0)];
 
