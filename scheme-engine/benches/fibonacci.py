@@ -8,5 +8,6 @@ def fibonacci(n):
     return fibonacci(n - 1) + fibonacci(n - 2)
 
 
-ms = timeit.timeit(lambda: fibonacci(20), number=10000)
-print(f"{ms:.2f}ms")
+for n in [10, 20, 25]:
+    ms = timeit.timeit(lambda: fibonacci(n), number=10000)
+    print(f"fib({n}) -> {ms:.2f}ms")

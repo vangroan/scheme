@@ -17,9 +17,19 @@ fn fibonacci_benchmark(c: &mut Criterion) {
         .as_closure()
         .expect("variable is not a closure")
         .clone();
-    let args: Vec<Expr> = vec![Expr::Number(20.0)];
 
+    let args: Vec<Expr> = vec![Expr::Number(10.0)];
+    c.bench_function("fib 10", |b| {
+        b.iter(|| scheme_engine::call(black_box(fibonacci.clone()), black_box(&args)))
+    });
+
+    let args: Vec<Expr> = vec![Expr::Number(20.0)];
     c.bench_function("fib 20", |b| {
+        b.iter(|| scheme_engine::call(black_box(fibonacci.clone()), black_box(&args)))
+    });
+
+    let args: Vec<Expr> = vec![Expr::Number(25.0)];
+    c.bench_function("fib 25", |b| {
         b.iter(|| scheme_engine::call(black_box(fibonacci.clone()), black_box(&args)))
     });
 }
