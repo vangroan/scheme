@@ -77,6 +77,14 @@ impl Expr {
         }
     }
 
+    pub fn as_sequence(&self) -> Option<&[Expr]> {
+        match self {
+            Expr::Sequence(expressions) => Some(expressions.as_slice()),
+            Expr::List(expressions) => Some(expressions.as_slice()),
+            _ => None,
+        }
+    }
+
     pub fn as_closure(&self) -> Option<&Handle<Closure>> {
         match self {
             Expr::Closure(handle) => Some(handle),

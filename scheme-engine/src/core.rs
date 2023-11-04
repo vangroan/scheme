@@ -6,6 +6,7 @@ use crate::expr::Expr;
 
 pub fn init_core(env: &mut Env) -> Result<()> {
     env.bind_native_func("assert", ext_assert)?;
+    env.bind_native_func("assert-eq", ext_assert_eq)?;
     env.bind_native_func("display", display)?;
     env.bind_native_func("newline", newline)?;
 
@@ -94,6 +95,19 @@ fn ext_assert(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
         }
     } else {
         Ok(expr.clone())
+    }
+}
+
+fn ext_assert_eq(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
+    let [arg1, arg2] = args2(args)?;
+    if arg1 == arg2 {
+        Ok(Expr::List(vec![arg1.clone(), arg2.clone()]))
+    } else {
+        Err(Error::Reason(format!(
+            "assertion failed: {} == {}",
+            arg1.repr(),
+            arg2.repr()
+        )))
     }
 }
 

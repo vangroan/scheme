@@ -53,6 +53,12 @@ macro_rules! error_unbound_variable {
     };
 }
 
+macro_rules! error_ill_special_form {
+    ($name:expr) => {
+        Error::Reason(format!("ill-formed special form {:?}", $name))
+    };
+}
+
 // TODO: Establish rules on whether the compiler may or may not mutate the given environment.
 struct Compiler {
     /// The current procedure being compiled.
@@ -180,7 +186,11 @@ impl Compiler {
         }
 
         let expressions = expr.as_slice().unwrap();
+        self.compile_sequence_slice(expressions)
+    }
 
+    // FIXME: When expressions are linked-lists this needs to go.
+    fn compile_sequence_slice(&mut self, expressions: &[Expr]) -> Result<()> {
         if let Some((last, preceding)) = expressions.split_last() {
             for expr in preceding {
                 self.compile_expr(expr)?;
@@ -322,6 +332,10 @@ impl Compiler {
                 }
                 "if" => {
                     self.compile_if_form(rest, false)?;
+                    Ok(true)
+                }
+                "cond" => {
+                    self.compile_cond_form(rest)?;
                     Ok(true)
                 }
                 "set!" => {
@@ -616,6 +630,160 @@ impl Compiler {
             }
             [..] => Err(Error::Reason("ill-formed special form".to_string())),
         }
+    }
+
+    /// Compile the `cond` special form.
+    ///
+    /// ```scheme
+    /// (cond <clause₁> <clause₂> ...)
+    /// (cond <clause₁> <clause₂> ... (else <expression₁> <expression₂> ...))
+    /// ```
+    ///
+    /// `<clause>` takes one of two forms:
+    ///
+    /// ```scheme
+    /// <clause> → (<test> <expression₁> <expression₂> ...)
+    /// <clause> → (<test> => <expression>)
+    /// ```
+    ///
+    /// Note that for the `cond` form the `else` clause does not have a `=>` variant.
+    fn compile_cond_form(&mut self, clauses: &[Expr]) -> Result<()> {
+        println!("COND!!! {:?}", clauses);
+
+        if clauses.is_empty() {
+            return Err(error_ill_special_form!("cond"));
+        }
+
+        let mut next: Option<usize> = None;
+        let mut ends = vec![];
+        let mut is_last = false;
+
+        for clause in clauses {
+            if is_last {
+                return Err(Error::Reason("else clause must be last".to_string()));
+            }
+
+            println!("CLAUSE!! {}", clause.repr());
+            let sequence = clause
+                .as_sequence()
+                .ok_or_else(|| error_ill_special_form!("cond"))?;
+
+            match sequence.first() {
+                Some(Expr::Ident(ident)) if ident == "else" => {
+                    println!("ELSE!!");
+
+                    // Ensure else clause is last
+                    is_last = true;
+
+                    // Skip over `else`
+                    match sequence.get(1..) {
+                        Some(expressions) => {
+                            // The previous clause falls through when it evaluates to false.
+                            if let Some(op_index) = next.take() {
+                                let addr = self.proc.next_op_addr();
+                                self.proc.patch_op(op_index, Op::JumpFalse(addr));
+
+                                // Remove the result of the previous test.
+                                self.proc.emit_op(Op::Pop); // #f
+                            }
+
+                            self.compile_sequence_slice(expressions)?;
+                        }
+                        // It's an error for `else` to be empty.
+                        None => {
+                            return Err(error_ill_special_form!("cond"));
+                        }
+                    }
+
+                    // Skip over the void return.
+                    ends.push(self.proc.reserve_op(Op::Jump(JumpAddr::zero())));
+                }
+                Some(_) => {
+                    println!("CASE!!");
+
+                    let (test, rest) = sequence
+                        .split_first()
+                        .ok_or_else(|| error_ill_special_form!("cond"))?;
+
+                    // The previous clause falls through when it evaluates to false.
+                    if let Some(op_index) = next.take() {
+                        let addr = self.proc.next_op_addr();
+                        self.proc.patch_op(op_index, Op::JumpFalse(addr));
+
+                        // Remove the result of the previous test.
+                        self.proc.emit_op(Op::Pop); // #f
+                    }
+
+                    // <test>
+                    self.compile_expr(test)?;
+
+                    // Jump to the next clause if this <test> fails.
+                    next = Some(self.proc.reserve_op(Op::JumpFalse(JumpAddr::zero())));
+
+                    println!("PEEK!!! {:?}", rest.get(1));
+                    match rest.get(1) {
+                        // The `=>` alternate form takes one expression as a procedure,
+                        // and calls it with the result of the <test> expression.
+                        Some(Expr::Ident(arrow)) if arrow == "=>" => {
+                            let callable =
+                                rest.get(1).ok_or_else(|| error_ill_special_form!("cond"))?;
+                            self.compile_expr(callable)?;
+
+                            // This form only allows for one expression.
+                            if !(&rest[2..]).is_empty() {
+                                return Err(error_ill_special_form!("cond"));
+                            }
+                        }
+                        // The default form is simply a sequence of expressions.
+                        _ => {
+                            self.compile_sequence_slice(rest)?;
+
+                            // `cond` evaluation stops with the first clause that is true.
+                            //
+                            // Prevent the clause from falling through to the next test
+                            // by jumping to the end of the `cond` block.
+                            ends.push(self.proc.reserve_op(Op::Jump(JumpAddr::zero())));
+
+                            continue;
+                        }
+                    }
+                }
+                // <clause> must have at least one expression
+                None => {
+                    return Err(error_ill_special_form!("cond"));
+                }
+            }
+        }
+
+        // When `cond` ends with `else` there is no `next`,
+        // because `else` has no test.
+        if let Some(op_index) = next.take() {
+            let addr = self.proc.next_op_addr();
+            self.proc.patch_op(op_index, Op::JumpFalse(addr));
+        }
+
+        // When no clauses evaluated to true, the return is unspecified.
+        self.proc.emit_op(Op::Pop); // #f
+        self.proc.emit_op(Op::PushVoid);
+
+        let end_addr = self.proc.next_op_addr();
+
+        for op_index in ends.drain(..) {
+            self.proc.patch_op(op_index, Op::Jump(end_addr.clone()));
+        }
+
+        assert!(next.is_none());
+
+        Ok(())
+    }
+
+    /// Compile the `case` special form.
+    ///
+    /// ```scheme
+    /// (case <key> <clause₁> <clause₂> ...)
+    /// ```
+    fn compile_case_form(&mut self, rest: &[Expr]) -> Result<()> {
+        todo!()
     }
 
     /// Compile the body of a `define`, `lambda`, `let`, etc...
