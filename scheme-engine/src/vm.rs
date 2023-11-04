@@ -9,14 +9,22 @@ use std::mem;
 pub fn eval(closure: Handle<Closure>) -> Result<Expr> {
     let mut vm = Vm::new();
     let result = vm.run(closure);
-    // println!("VM eval stack: {:?}", vm.operand);
+
+    if let Err(_) = &result {
+        println!("evaluation stack");
+        println!("---");
+        for expr in vm.operand.iter().rev() {
+            println!("  {}", expr.repr());
+        }
+        println!("---");
+    }
+
     result
 }
 
 pub fn call(closure: Handle<Closure>, args: &[Expr]) -> Result<Expr> {
     let mut vm = Vm::new();
     let result = vm.run_args(closure, args);
-    // println!("VM eval stack: {:?}", vm.operand);
     result
 }
 

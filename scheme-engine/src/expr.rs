@@ -130,6 +130,7 @@ impl<'a> fmt::Display for ExprRepr<'a> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self.expr {
             Expr::Nil => write!(f, "'()"),
+            Expr::Void => write!(f, "#!void"),
             Expr::Bool(boolean) => {
                 if *boolean {
                     write!(f, "#t")
@@ -175,7 +176,9 @@ impl<'a> fmt::Display for ExprRepr<'a> {
                 //  TODO!("keep Rust function name")
                 write!(f, "<native-function>")
             }
-            _ => todo!("expression type repr not implemented yet"),
+            unsupported_type => {
+                todo!("expression type repr not implemented yet: {unsupported_type:?}")
+            }
         }
     }
 }

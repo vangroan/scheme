@@ -648,7 +648,7 @@ impl Compiler {
     ///
     /// Note that for the `cond` form the `else` clause does not have a `=>` variant.
     fn compile_cond_form(&mut self, clauses: &[Expr]) -> Result<()> {
-        println!("COND!!! {:?}", clauses);
+        println!("compile::compile_cond_form({clauses:?})");
 
         if clauses.is_empty() {
             return Err(error_ill_special_form!("cond"));
@@ -661,6 +661,15 @@ impl Compiler {
         for clause in clauses {
             if is_last {
                 return Err(Error::Reason("else clause must be last".to_string()));
+            }
+
+            // The previous clause falls through when it evaluates to false.
+            if let Some(op_index) = next.take() {
+                let addr = self.proc.next_op_addr();
+                self.proc.patch_op(op_index, Op::JumpFalse(addr));
+
+                // Remove the result of the previous test.
+                self.proc.emit_op(Op::Pop); // #f
             }
 
             println!("CLAUSE!! {}", clause.repr());
@@ -679,13 +688,13 @@ impl Compiler {
                     match sequence.get(1..) {
                         Some(expressions) => {
                             // The previous clause falls through when it evaluates to false.
-                            if let Some(op_index) = next.take() {
-                                let addr = self.proc.next_op_addr();
-                                self.proc.patch_op(op_index, Op::JumpFalse(addr));
-
-                                // Remove the result of the previous test.
-                                self.proc.emit_op(Op::Pop); // #f
-                            }
+                            // if let Some(op_index) = next.take() {
+                            //     let addr = self.proc.next_op_addr();
+                            //     self.proc.patch_op(op_index, Op::JumpFalse(addr));
+                            //
+                            //     // Remove the result of the previous test.
+                            //     self.proc.emit_op(Op::Pop); // #f
+                            // }
 
                             self.compile_sequence_slice(expressions)?;
                         }
@@ -706,13 +715,13 @@ impl Compiler {
                         .ok_or_else(|| error_ill_special_form!("cond"))?;
 
                     // The previous clause falls through when it evaluates to false.
-                    if let Some(op_index) = next.take() {
-                        let addr = self.proc.next_op_addr();
-                        self.proc.patch_op(op_index, Op::JumpFalse(addr));
-
-                        // Remove the result of the previous test.
-                        self.proc.emit_op(Op::Pop); // #f
-                    }
+                    // if let Some(op_index) = next.take() {
+                    //     let addr = self.proc.next_op_addr();
+                    //     self.proc.patch_op(op_index, Op::JumpFalse(addr));
+                    //
+                    //     // Remove the result of the previous test.
+                    //     self.proc.emit_op(Op::Pop); // #f
+                    // }
 
                     // <test>
                     self.compile_expr(test)?;
@@ -736,6 +745,9 @@ impl Compiler {
                         }
                         // The default form is simply a sequence of expressions.
                         _ => {
+                            // Discard the result of <test>
+                            self.proc.emit_op(Op::Pop);
+
                             self.compile_sequence_slice(rest)?;
 
                             // `cond` evaluation stops with the first clause that is true.
@@ -757,14 +769,28 @@ impl Compiler {
 
         // When `cond` ends with `else` there is no `next`,
         // because `else` has no test.
-        if let Some(op_index) = next.take() {
-            let addr = self.proc.next_op_addr();
-            self.proc.patch_op(op_index, Op::JumpFalse(addr));
+        // if let Some(op_index) = next.take() {
+        //     let addr = self.proc.next_op_addr();
+        //     self.proc.patch_op(op_index, Op::JumpFalse(addr));
+        // }
+        match next.take() {
+            // When no clauses evaluated to true, and there is no `else`,
+            // then the return value of the `cond` is unspecified.
+            Some(op_index) => {
+                let addr = self.proc.next_op_addr();
+                self.proc.patch_op(op_index, Op::JumpFalse(addr));
+                self.proc.emit_op(Op::Pop); // #f
+                self.proc.emit_op(Op::PushVoid);
+            }
+            // When `cond` ends with `else` there is no `next`,
+            // because `else` has no test.
+            None => {}
         }
 
         // When no clauses evaluated to true, the return is unspecified.
-        self.proc.emit_op(Op::Pop); // #f
-        self.proc.emit_op(Op::PushVoid);
+        // self.proc.emit_op(Op::Pop); // #f
+        // self.proc.emit_op(Op::PushVoid);
+        // let unspecified_op = self.proc.reserve_op(Op::Jump(JumpAddr::zero()));
 
         let end_addr = self.proc.next_op_addr();
 
