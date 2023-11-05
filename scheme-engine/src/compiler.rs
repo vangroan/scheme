@@ -239,6 +239,9 @@ impl Compiler {
                 // Attempt to access a variable by identifier.
                 self.compile_access(ident.as_str())?;
             }
+            Expr::Quote(value) => {
+                self.compile_quote_form(&*value)?;
+            }
             Expr::List(list) => {
                 self.compile_form(list.as_slice())?;
             }
@@ -342,7 +345,8 @@ impl Compiler {
                     todo!("set! form")
                 }
                 "quote" => {
-                    todo!("quote form")
+                    self.compile_quote_form_slice(rest)?;
+                    Ok(true)
                 }
                 _ => Ok(false),
             }
@@ -840,6 +844,22 @@ impl Compiler {
 
             Ok(())
         })
+    }
+
+    /// Compile an expression as a constant value.
+    fn compile_quote_form_slice(&mut self, expressions: &[Expr]) -> Result<ConstantId> {
+        println!("compiler::compile_quote_form_slice({expressions:?})");
+        match expressions {
+            [value] => self.compile_quote_form(value),
+            [..] => Err(error_ill_special_form!("quote")),
+        }
+    }
+
+    fn compile_quote_form(&mut self, value: &Expr) -> Result<ConstantId> {
+        println!("compiler::compile_quote_form({value:?})");
+        let constant_id = self.add_constant(value.clone());
+        self.proc.emit_op(Op::PushConstant(constant_id));
+        Ok(constant_id)
     }
 
     /// Add a constant value to the current environment.

@@ -51,7 +51,7 @@ fn parse_expr(lexer: &mut Lexer) -> Result<Expr> {
         TokenKind::LeftParen => parse_list(lexer),
         TokenKind::EOF => Err(Error::Reason("unexpected end-of-file".to_string())),
         TokenKind::RightParen => Err(Error::Reason("unexpected right parentheses".to_string())),
-        TokenKind::QuoteMark => parse_expr(lexer).map(Box::new).map(Expr::Quote),
+        TokenKind::QuoteMark => parse_quote(lexer),
         _ => {
             let fragment = token.fragment(lexer.source());
             parse_atom(token.clone(), fragment)
@@ -81,6 +81,11 @@ fn parse_list(lexer: &mut Lexer) -> Result<Expr> {
     }
 
     Ok(Expr::List(expressions))
+}
+
+fn parse_quote(lexer: &mut Lexer) -> Result<Expr> {
+    println!("parse_quote({:?})", lexer.rest());
+    parse_expr(lexer).map(Box::new).map(Expr::Quote)
 }
 
 fn parse_atom(token: Token, fragment: &str) -> Result<Expr> {

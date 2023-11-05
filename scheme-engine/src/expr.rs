@@ -146,7 +146,10 @@ impl<'a> fmt::Display for ExprRepr<'a> {
             },
             Expr::List(list) => {
                 write!(f, "(")?;
-                for expr in list {
+                for (idx, expr) in list.iter().enumerate() {
+                    if idx != 0 {
+                        write!(f, " ")?;
+                    }
                     let repr = ExprRepr { expr };
                     write!(f, "{repr}")?;
                 }
@@ -155,7 +158,10 @@ impl<'a> fmt::Display for ExprRepr<'a> {
             }
             Expr::Sequence(expressions) => {
                 write!(f, "(")?;
-                for expr in expressions {
+                for (idx, expr) in expressions.iter().enumerate() {
+                    if idx != 0 {
+                        write!(f, " ")?;
+                    }
                     let repr = ExprRepr { expr };
                     write!(f, "{repr}")?;
                 }
