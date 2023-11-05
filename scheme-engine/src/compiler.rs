@@ -592,9 +592,9 @@ impl Compiler {
     /// # Tail Calls
     ///
     /// TODO: Handle proper tail calls for branches.
-    fn compile_if_form(&mut self, rest: &[Expr], is_last: bool) -> Result<()> {
-        match rest {
-            [test_expr, consequent, alternate] => {
+    fn compile_if_form(&mut self, expressions: &[Expr], is_last: bool) -> Result<()> {
+        match expressions.split_first() {
+            Some((test_expr, rest)) => {
                 // <test>
                 self.compile_expr(test_expr)?;
 
@@ -604,6 +604,7 @@ impl Compiler {
                 self.proc.emit_op(Op::Pop); // <test> result
 
                 // <consequent>
+                let consequent = rest.get(0).ok_or_else(|| error_ill_special_form!("if"))?;
                 self.compile_expr(consequent)?;
 
                 // Jump over the <alternate>.
@@ -616,7 +617,17 @@ impl Compiler {
                     .patch_op(test_jump_index, Op::JumpFalse(alternate_addr));
                 self.proc.emit_op(Op::Pop); // <test> result
 
-                self.compile_expr(alternate)?;
+                match rest.get(1) {
+                    Some(alternate) => {
+                        self.compile_expr(alternate)?;
+                    }
+                    // When there is no explicit <alternate> then the `if` result is unspecified.
+                    //
+                    // Implicitly return void.
+                    None => {
+                        self.proc.emit_op(Op::PushVoid);
+                    }
+                }
 
                 // The end of the <consequent> block must jump to the end of <alternate>
                 // to avoid a true test falling through to the wrong block.
@@ -625,10 +636,7 @@ impl Compiler {
 
                 Ok(())
             }
-            [_test_expr, _consequent] => {
-                todo!()
-            }
-            [..] => Err(Error::Reason("ill-formed special form".to_string())),
+            None => Err(Error::Reason("ill-formed special form".to_string())),
         }
     }
 
