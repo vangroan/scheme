@@ -13,6 +13,7 @@
 (assert (= (if #t (+ 3 7) (* 3 7)) 10))
 (assert (= (if #f (+ 3 7) (* 3 7)) 21))
 (assert (if (= 3 3 3 3 3 3) #t #f))
+;; (assert-eq (if (< 1 0)) #!void)
 
 (define iter (lambda (n)
   (if (< n 6)
@@ -24,7 +25,7 @@
 ;; cond
 (assert-eq (cond (#t 1) (#f 2) (#f 3)) 1)
 (assert-eq (cond (#f 1) (#t 2) (#t 3)) 2)
-;; (assert-eq (cond (#f 1) (#f 2) (#f 3)) 3) ;; TODO: void literal
+;; (assert-eq (cond (#f 1) (#f 2) (#f 3)) #!void) ;; TODO: void literal
 (assert-eq (cond ((< 0 1) 4) ((> 0 1) 5)) 4)
 (assert-eq (cond (#f 4) (else 5)) 5)
 
