@@ -126,6 +126,21 @@ pub struct ExprRepr<'a> {
     expr: &'a Expr,
 }
 
+impl<'a> ExprRepr<'a> {
+    fn fmt_expressions(&self, f: &mut fmt::Formatter, expressions: &[Expr]) -> fmt::Result {
+        write!(f, "(")?;
+        for (idx, expr) in expressions.iter().enumerate() {
+            if idx != 0 {
+                write!(f, " ")?;
+            }
+            let repr = ExprRepr { expr };
+            write!(f, "{repr}")?;
+        }
+        write!(f, ")")?;
+        Ok(())
+    }
+}
+
 impl<'a> fmt::Display for ExprRepr<'a> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self.expr {
@@ -145,27 +160,11 @@ impl<'a> fmt::Display for ExprRepr<'a> {
                 Keyword::Dot => write!(f, "."),
             },
             Expr::List(list) => {
-                write!(f, "(")?;
-                for (idx, expr) in list.iter().enumerate() {
-                    if idx != 0 {
-                        write!(f, " ")?;
-                    }
-                    let repr = ExprRepr { expr };
-                    write!(f, "{repr}")?;
-                }
-                write!(f, ")")?;
+                self.fmt_expressions(f, list)?;
                 Ok(())
             }
             Expr::Sequence(expressions) => {
-                write!(f, "(")?;
-                for (idx, expr) in expressions.iter().enumerate() {
-                    if idx != 0 {
-                        write!(f, " ")?;
-                    }
-                    let repr = ExprRepr { expr };
-                    write!(f, "{repr}")?;
-                }
-                write!(f, ")")?;
+                self.fmt_expressions(f, expressions)?;
                 Ok(())
             }
             Expr::Procedure(procedure) => {
