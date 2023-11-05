@@ -19,6 +19,7 @@
     (iter (+ n 1)) ; recursive
     (* n 3)        ; base
    )))
+(assert-eq (iter 0) 18)
 
 ;; cond
 (assert-eq (cond (#t 1) (#f 2) (#f 3)) 1)
