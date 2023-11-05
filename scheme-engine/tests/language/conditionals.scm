@@ -23,11 +23,13 @@
 (assert-eq (iter 0) 18)
 
 ;; cond
-(assert-eq (cond (#t 1) (#f 2) (#f 3)) 1)
-(assert-eq (cond (#f 1) (#t 2) (#t 3)) 2)
+(assert-eq 'first  (cond (#t 'first) (#t 'second) (#f 'third)) )
+(assert-eq 'second (cond (#f 'first) (#t 'second) (#t 'third)) )
+(assert-eq 'third  (cond (#f 'first) (#f 'second) (#t 'third)) )
 ;; (assert-eq (cond (#f 1) (#f 2) (#f 3)) #!void) ;; TODO: void literal
-(assert-eq (cond ((< 0 1) 4) ((> 0 1) 5)) 4)
-(assert-eq (cond (#f 4) (else 5)) 5)
+(assert-eq 'first  (cond ((< 0 1) 'first) ((> 0 1) 'second)) )
+(assert-eq 'second (cond ((> 0 1) 'first) ((< 0 1) 'second)) )
+(assert-eq 'second (cond (#f 'first) (else 'second)) )
 
 (define choose (lambda (n) (cond ((< n 0) 1) ((= n 0) 2) ((> n 0) 3))))
 (assert (= (choose 0) 2))
