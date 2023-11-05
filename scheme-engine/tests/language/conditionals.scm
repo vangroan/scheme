@@ -16,8 +16,8 @@
 
 (define iter (lambda (n)
   (if (< n 6)
-    (iter (+ n 1))
-    (* n 3)
+    (iter (+ n 1)) ; recursive
+    (* n 3)        ; base
    )))
 
 ;; cond
@@ -34,6 +34,6 @@
 (define iter (lambda (n)
   (cond
     ((>= n 5) (* n n))           ; base
-     (else (iter (+ n 1))) ; recursive
+     (else (iter (+ n 1)))       ; recursive
   )))
 (assert-eq (iter 5) 25)
