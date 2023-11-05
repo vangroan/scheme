@@ -1,9 +1,35 @@
 use std::io::{self, Write};
+use std::{env, fs};
 
 use scheme_engine::{self, Expr};
 
 fn main() {
-    run_repl()
+    let args: Vec<String> = env::args().collect();
+
+    match args.get(1) {
+        Some(file_path) => run_file(file_path),
+        None => run_repl(),
+    }
+}
+
+fn run_file(file_path: &str) {
+    match fs::read_to_string(file_path) {
+        Ok(script) => {
+            // Global environment
+            let env = scheme_engine::new_env().expect("failed creating new core environment");
+
+            let expr =
+                scheme_engine::parse(script.as_str(), true).expect("failed to parse program");
+
+            let closure =
+                scheme_engine::compile(env.clone(), &expr).expect("failed to compile program");
+
+            let _value0 = scheme_engine::eval(closure).expect("runtime error");
+        }
+        Err(err) => {
+            eprintln!("failed to open file: {err}");
+        }
+    }
 }
 
 fn run_repl() {
