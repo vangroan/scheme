@@ -1,0 +1,10 @@
+
+[workspace]
+
+# Use edition 2021 resolver
+resolver = "2"
+
+members = [
+    "./scheme",
+    "./scheme-engine",
+]
