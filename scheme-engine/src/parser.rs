@@ -1,5 +1,6 @@
 //! Parser.
 
+use crate::ext::*;
 use crate::{
     error::{Error, Result},
     expr::Expr,
@@ -94,25 +95,27 @@ fn parse_atom(token: Token, fragment: &str) -> Result<Expr> {
     use TokenKind::*;
     debug_assert_eq!(token.kind, Atom);
 
-    let mut chars = fragment.chars();
-    let ch = chars
-        .next()
-        .ok_or_else(|| Error::Reason("expected atom".to_string()))?;
-
-    match ch {
-        '0'..='9' => parse_number(token, fragment),
-        '#' => match chars.next() {
-            Some('t') => Ok(Expr::Bool(true)),
-            Some('f') => Ok(Expr::Bool(false)),
-            Some('b') => todo!("parse binary number"),
-            Some('x') => todo!("parse hexadecimal number"),
-            _ => todo!("unexpected character"),
-        },
-        '+' | '-' | '*' | '=' | '<' | '>' | 'a'..='z' => {
-            // TODO: The complex identifier rules
-            parse_identifier(token, fragment)
+    if let Some((ch, rest)) = fragment.split_first_char() {
+        match ch {
+            '0'..='9' => parse_number(token, fragment),
+            '#' => match rest.first() {
+                Some('t') => Ok(Expr::Bool(true)),
+                Some('f') => Ok(Expr::Bool(false)),
+                Some('b') => todo!("parse binary number"),
+                Some('x') => todo!("parse hexadecimal number"),
+                _ => match rest {
+                    "void" => Ok(Expr::Void),
+                    _ => Err(Error::Reason(format!("unknown atom: {ch:?}"))),
+                },
+            },
+            '+' | '-' | '*' | '=' | '<' | '>' | 'a'..='z' => {
+                // TODO: The complex identifier rules
+                parse_identifier(token, fragment)
+            }
+            _ => Err(Error::Reason(format!("unexpected character: {ch:?}"))),
         }
-        _ => Err(Error::Reason(format!("unexpected character: {ch:?}"))),
+    } else {
+        Err(Error::Reason("expected atom".to_string()))
     }
 }
 
