@@ -110,6 +110,7 @@ impl PartialEq<Expr> for Expr {
 
         match (self, other) {
             (Nil, Nil) => true,
+            (Void, Void) => true,
             (Bool(a), Bool(b)) => a == b,
             (Number(a), Number(b)) => a == b,
             (String(a), String(b)) => a == b,

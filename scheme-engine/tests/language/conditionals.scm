@@ -13,7 +13,7 @@
 (assert (= (if #t (+ 3 7) (* 3 7)) 10))
 (assert (= (if #f (+ 3 7) (* 3 7)) 21))
 (assert (if (= 3 3 3 3 3 3) #t #f))
-;; (assert-eq (if (< 1 0)) #!void)
+(assert-eq #void (if (< 1 0) 'unreachable) )
 
 (define iter (lambda (n)
   (if (< n 6)
@@ -26,7 +26,7 @@
 (assert-eq 'first  (cond (#t 'first) (#t 'second) (#f 'third)) )
 (assert-eq 'second (cond (#f 'first) (#t 'second) (#t 'third)) )
 (assert-eq 'third  (cond (#f 'first) (#f 'second) (#t 'third)) )
-;; (assert-eq (cond (#f 1) (#f 2) (#f 3)) #!void) ;; TODO: void literal
+(assert-eq #void (cond (#f 1) (#f 2) (#f 3)))
 (assert-eq 'first  (cond ((< 0 1) 'first) ((> 0 1) 'second)) )
 (assert-eq 'second (cond ((> 0 1) 'first) ((< 0 1) 'second)) )
 (assert-eq 'second (cond (#f 'first) (else 'second)) )

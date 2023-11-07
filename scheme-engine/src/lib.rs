@@ -4,6 +4,7 @@ mod cursor;
 mod env;
 pub mod error;
 mod expr;
+mod ext;
 mod handle;
 mod lexer;
 mod limits;
