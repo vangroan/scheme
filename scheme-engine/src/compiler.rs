@@ -9,7 +9,7 @@ use crate::error::{Error, Result};
 use crate::expr::{Closure, Expr, Keyword, Proc, Signature};
 use crate::handle::Handle;
 use crate::limits::*;
-use crate::opcode::{Op, UpValueOrigin};
+use crate::opcode::{JumpAddr, Op, UpValueOrigin};
 use crate::symbol::SymbolId;
 
 /// Compiles the given top-level expression into bytecode.
@@ -50,6 +50,12 @@ pub fn compile(env: Handle<Env>, expr: &Expr) -> Result<Handle<Closure>> {
 macro_rules! error_unbound_variable {
     ($name:expr) => {
         Error::Reason(format!("unbound variable {:?}", $name))
+    };
+}
+
+macro_rules! error_ill_special_form {
+    ($name:expr) => {
+        Error::Reason(format!("ill-formed special form {:?}", $name))
     };
 }
 
@@ -180,7 +186,11 @@ impl Compiler {
         }
 
         let expressions = expr.as_slice().unwrap();
+        self.compile_sequence_slice(expressions)
+    }
 
+    // FIXME: When expressions are linked-lists this needs to go.
+    fn compile_sequence_slice(&mut self, expressions: &[Expr]) -> Result<()> {
         if let Some((last, preceding)) = expressions.split_last() {
             for expr in preceding {
                 self.compile_expr(expr)?;
@@ -228,6 +238,9 @@ impl Compiler {
             Expr::Ident(ident) => {
                 // Attempt to access a variable by identifier.
                 self.compile_access(ident.as_str())?;
+            }
+            Expr::Quote(value) => {
+                self.compile_quote_form(&*value)?;
             }
             Expr::List(list) => {
                 self.compile_form(list.as_slice())?;
@@ -320,11 +333,20 @@ impl Compiler {
                 "fluid-let" => {
                     todo!("fluid-let form")
                 }
+                "if" => {
+                    self.compile_if_form(rest, false)?;
+                    Ok(true)
+                }
+                "cond" => {
+                    self.compile_cond_form(rest)?;
+                    Ok(true)
+                }
                 "set!" => {
                     todo!("set! form")
                 }
                 "quote" => {
-                    todo!("quote form")
+                    self.compile_quote_form_slice(rest)?;
+                    Ok(true)
                 }
                 _ => Ok(false),
             }
@@ -554,6 +576,217 @@ impl Compiler {
         }
     }
 
+    /// Compile the `if` special form.
+    ///
+    /// First the `<test>` expression is evaluated. If the result is truthy,
+    /// then the `<consequent>` expression is evaluated. If the result is
+    /// false, then the `<alternate>` expression is evaluated.
+    ///
+    /// In the form where there is no `<alternate>` expression, and the test
+    /// results in false, then the result is `#!void`.
+    ///
+    /// Of all the Scheme values, only `#f` counts as false in conditional
+    /// expressions. All other Scheme values, including `#t`, count as true.
+    ///
+    /// ```scheme
+    /// (if <test> <consequent> <alternate>)
+    /// (if <test> <consequent>)
+    /// ```
+    ///
+    /// # Tail Calls
+    ///
+    /// TODO: Handle proper tail calls for branches.
+    fn compile_if_form(&mut self, expressions: &[Expr], is_last: bool) -> Result<()> {
+        match expressions.split_first() {
+            Some((test_expr, rest)) => {
+                // <test>
+                self.compile_expr(test_expr)?;
+
+                // The start of the <alternate> bytecode can only be determined
+                // when the <consequent> is completely emitted.
+                let test_jump_index = self.proc.reserve_op(Op::JumpFalse(JumpAddr::zero()));
+                self.proc.emit_op(Op::Pop); // <test> result
+
+                // <consequent>
+                let consequent = rest.get(0).ok_or_else(|| error_ill_special_form!("if"))?;
+                self.compile_expr(consequent)?;
+
+                // Jump over the <alternate>.
+                // TODO: Tail calls for conditionals.
+                let end_jump_index = self.proc.reserve_op(Op::Jump(JumpAddr::zero()));
+
+                // <alternate>
+                let alternate_addr = self.proc.next_op_addr();
+                self.proc
+                    .patch_op(test_jump_index, Op::JumpFalse(alternate_addr));
+                self.proc.emit_op(Op::Pop); // <test> result
+
+                match rest.get(1) {
+                    Some(alternate) => {
+                        self.compile_expr(alternate)?;
+                    }
+                    // When there is no explicit <alternate> then the `if` result is unspecified.
+                    //
+                    // Implicitly return void.
+                    None => {
+                        self.proc.emit_op(Op::PushVoid);
+                    }
+                }
+
+                // The end of the <consequent> block must jump to the end of <alternate>
+                // to avoid a true test falling through to the wrong block.
+                let alternate_end = self.proc.next_op_addr();
+                self.proc.patch_op(end_jump_index, Op::Jump(alternate_end));
+
+                Ok(())
+            }
+            None => Err(Error::Reason("ill-formed special form".to_string())),
+        }
+    }
+
+    /// Compile the `cond` special form.
+    ///
+    /// ```scheme
+    /// (cond <clause₁> <clause₂> ...)
+    /// (cond <clause₁> <clause₂> ... (else <expression₁> <expression₂> ...))
+    /// ```
+    ///
+    /// `<clause>` takes one of two forms:
+    ///
+    /// ```scheme
+    /// <clause> → (<test> <expression₁> <expression₂> ...)
+    /// <clause> → (<test> => <expression>)
+    /// ```
+    ///
+    /// Note that for the `cond` form the `else` clause does not have a `=>` variant.
+    fn compile_cond_form(&mut self, clauses: &[Expr]) -> Result<()> {
+        println!("compile::compile_cond_form({clauses:?})");
+
+        if clauses.is_empty() {
+            return Err(error_ill_special_form!("cond"));
+        }
+
+        let mut next: Option<usize> = None;
+        let mut ends = vec![];
+        let mut is_last = false;
+
+        for clause in clauses {
+            if is_last {
+                return Err(Error::Reason("else clause must be last".to_string()));
+            }
+
+            // The previous clause falls through when it evaluates to false.
+            if let Some(op_index) = next.take() {
+                let addr = self.proc.next_op_addr();
+                self.proc.patch_op(op_index, Op::JumpFalse(addr));
+
+                // Remove the result of the previous test.
+                self.proc.emit_op(Op::Pop); // #f
+            }
+
+            let sequence = clause
+                .as_sequence()
+                .ok_or_else(|| error_ill_special_form!("cond"))?;
+
+            match sequence.first() {
+                Some(Expr::Ident(ident)) if ident == "else" => {
+                    // Ensure else clause is last
+                    is_last = true;
+
+                    // Skip over `else`
+                    match sequence.get(1..) {
+                        Some(expressions) => {
+                            self.compile_sequence_slice(expressions)?;
+                        }
+                        // It's an error for `else` to be empty.
+                        None => {
+                            return Err(error_ill_special_form!("cond"));
+                        }
+                    }
+
+                    // Skip over the void return.
+                    ends.push(self.proc.reserve_op(Op::Jump(JumpAddr::zero())));
+                }
+                Some(_) => {
+                    let (test, rest) = sequence
+                        .split_first()
+                        .ok_or_else(|| error_ill_special_form!("cond"))?;
+
+                    // <test>
+                    self.compile_expr(test)?;
+
+                    // Jump to the next clause if this <test> fails.
+                    next = Some(self.proc.reserve_op(Op::JumpFalse(JumpAddr::zero())));
+
+                    match rest.get(1) {
+                        // The `=>` alternate form takes one expression as a procedure,
+                        // and calls it with the result of the <test> expression.
+                        Some(Expr::Ident(arrow)) if arrow == "=>" => {
+                            let callable =
+                                rest.get(1).ok_or_else(|| error_ill_special_form!("cond"))?;
+                            self.compile_expr(callable)?;
+
+                            // This form only allows for one expression.
+                            if !(&rest[2..]).is_empty() {
+                                return Err(error_ill_special_form!("cond"));
+                            }
+                        }
+                        // The default form is simply a sequence of expressions.
+                        _ => {
+                            // Discard the result of <test>
+                            self.proc.emit_op(Op::Pop);
+
+                            self.compile_sequence_slice(rest)?;
+
+                            // `cond` evaluation stops with the first clause that is true.
+                            //
+                            // Prevent the clause from falling through to the next test
+                            // by jumping to the end of the `cond` block.
+                            ends.push(self.proc.reserve_op(Op::Jump(JumpAddr::zero())));
+
+                            continue;
+                        }
+                    }
+                }
+                // <clause> must have at least one expression
+                None => {
+                    return Err(error_ill_special_form!("cond"));
+                }
+            }
+        }
+
+        // When no clauses evaluated to true, and there is no `else`,
+        // then the return value of the `cond` is unspecified.
+        //
+        // When `cond` ends with `else` there is no `next`,
+        // because `else` has no test.
+        if let Some(op_index) = next.take() {
+            let addr = self.proc.next_op_addr();
+            self.proc.patch_op(op_index, Op::JumpFalse(addr));
+            self.proc.emit_op(Op::Pop); // #f
+            self.proc.emit_op(Op::PushVoid);
+        }
+
+        let end_addr = self.proc.next_op_addr();
+
+        for op_index in ends.drain(..) {
+            self.proc.patch_op(op_index, Op::Jump(end_addr.clone()));
+        }
+
+        assert!(next.is_none());
+
+        Ok(())
+    }
+
+    /// Compile the `case` special form.
+    ///
+    /// ```scheme
+    /// (case <key> <clause₁> <clause₂> ...)
+    /// ```
+    fn compile_case_form(&mut self, rest: &[Expr]) -> Result<()> {
+        todo!()
+    }
+
     /// Compile the body of a `define`, `lambda`, `let`, etc...
     fn compile_body(&mut self, rest: &[Expr]) -> Result<()> {
         self.context(Context::BodyStart, |compiler| {
@@ -611,6 +844,22 @@ impl Compiler {
 
             Ok(())
         })
+    }
+
+    /// Compile an expression as a constant value.
+    fn compile_quote_form_slice(&mut self, expressions: &[Expr]) -> Result<ConstantId> {
+        println!("compiler::compile_quote_form_slice({expressions:?})");
+        match expressions {
+            [value] => self.compile_quote_form(value),
+            [..] => Err(error_ill_special_form!("quote")),
+        }
+    }
+
+    fn compile_quote_form(&mut self, value: &Expr) -> Result<ConstantId> {
+        println!("compiler::compile_quote_form({value:?})");
+        let constant_id = self.add_constant(value.clone());
+        self.proc.emit_op(Op::PushConstant(constant_id));
+        Ok(constant_id)
     }
 
     /// Add a constant value to the current environment.
@@ -810,6 +1059,11 @@ impl ProcState {
             constants: Vec::new(),
             up_values: Vec::new(),
         }
+    }
+
+    fn next_op_addr(&self) -> JumpAddr {
+        let next_index = self.code.len();
+        JumpAddr::new(next_index)
     }
 
     fn emit_op(&mut self, op: Op) {

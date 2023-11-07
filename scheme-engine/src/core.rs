@@ -6,6 +6,7 @@ use crate::expr::Expr;
 
 pub fn init_core(env: &mut Env) -> Result<()> {
     env.bind_native_func("assert", ext_assert)?;
+    env.bind_native_func("assert-eq", ext_assert_eq)?;
     env.bind_native_func("display", display)?;
     env.bind_native_func("newline", newline)?;
 
@@ -14,6 +15,10 @@ pub fn init_core(env: &mut Env) -> Result<()> {
     env.bind_native_func("-", number_sub)?;
     env.bind_native_func("*", number_mul)?;
     env.bind_native_func("=", number_eq)?;
+    env.bind_native_func("<", number_lt)?;
+    env.bind_native_func(">", number_gt)?;
+    env.bind_native_func("<=", number_lt_eq)?;
+    env.bind_native_func(">=", number_gt_eq)?;
 
     env.bind_native_func("boolean?", boolean_is_boolean)?;
     env.bind_native_func("not", boolean_not)?;
@@ -21,6 +26,47 @@ pub fn init_core(env: &mut Env) -> Result<()> {
     env.bind_native_func("or", boolean_or)?;
 
     Ok(())
+}
+
+macro_rules! unexpected_type {
+    ($expected:expr) => {
+        Err(Error::Reason(format!(
+            "expected argument to be a {}",
+            $expected
+        )))
+    };
+}
+
+macro_rules! wrong_arg_count {
+    () => {
+        Err(Error::Reason(format!(
+            "[{}:{}] wrong number of arguments passed to procedure",
+            file!(),
+            line!()
+        )))
+    };
+}
+
+fn args1(args: &[Expr]) -> Result<&Expr> {
+    match args {
+        [arg1] => Ok(arg1),
+        [..] => wrong_arg_count!(),
+    }
+}
+
+fn args2(args: &[Expr]) -> Result<[&Expr; 2]> {
+    match args {
+        [arg1, arg2] => Ok([arg1, arg2]),
+        [..] => wrong_arg_count!(),
+    }
+}
+
+fn args2_numbers(args: &[Expr]) -> Result<[f64; 2]> {
+    // println!("args2_numbers({:?})", args);
+    match args {
+        [Expr::Number(arg1), Expr::Number(arg2)] => Ok([*arg1, *arg2]),
+        [..] => wrong_arg_count!(),
+    }
 }
 
 /// There is no assert in Scheme. This is our own extension to assist with unit testing.
@@ -52,15 +98,25 @@ fn ext_assert(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
     }
 }
 
+fn ext_assert_eq(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
+    let [arg1, arg2] = args2(args)?;
+    if arg1 == arg2 {
+        Ok(Expr::List(vec![arg1.clone(), arg2.clone()]))
+    } else {
+        Err(Error::Reason(format!(
+            "assertion failed: {} == {}",
+            arg1.repr(),
+            arg2.repr()
+        )))
+    }
+}
+
 fn display(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
-    // TODO: Proper external representation, and not Rust `Debug`
-    let arg0 = args.get(0).ok_or_else(|| {
-        Error::Reason("wrong number of arguments passed to procedure".to_string())
-    })?;
+    let arg0 = args1(args)?;
+    let repr = arg0.repr();
 
-    print!("{arg0:?}");
+    print!("{repr}");
 
-    // TODO: Display evaluates to nothing, like define?
     Ok(Expr::Void)
 }
 
@@ -68,7 +124,6 @@ fn newline(_env: &mut Env, _args: &[Expr]) -> Result<Expr> {
     // TODO: Output port argument
     println!();
 
-    // TODO: Display evaluates to nothing, like define?
     Ok(Expr::Void)
 }
 
@@ -83,6 +138,8 @@ fn number_is_number(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
 }
 
 fn number_add(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
+    // println!("number_add({:?})", args);
+
     let mut sum: f64 = 0.0;
 
     for (index, arg) in args.iter().enumerate() {
@@ -96,11 +153,13 @@ fn number_add(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
         }
     }
 
-    println!("number_add -> {sum}");
+    // println!("number_add -> {sum}");
     Ok(Expr::Number(sum))
 }
 
 fn number_sub(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
+    // println!("number_sub({:?})", args);
+
     let mut sum: f64 = args
         .get(0)
         .ok_or_else(|| Error::Reason("wrong number of arguments passed to procedure".to_string()))?
@@ -115,7 +174,7 @@ fn number_sub(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
     let rest = &args[1..];
 
     for (index, arg) in rest.iter().enumerate() {
-        println!("arg [{index}] {arg:?}; sum -> {sum}");
+        // println!("arg [{index}] {arg:?}; sum -> {sum}");
         match arg {
             Expr::Number(number) => sum -= number,
             _ => {
@@ -126,7 +185,7 @@ fn number_sub(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
         }
     }
 
-    println!("number_sub -> {sum}");
+    // println!("number_sub -> {sum}");
     Ok(Expr::Number(sum))
 }
 
@@ -166,6 +225,27 @@ fn number_eq(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
     }
 
     Ok(Expr::Bool(true))
+}
+
+fn number_lt(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
+    let [arg1, arg2] = args2_numbers(args)?;
+    Ok(Expr::Bool(arg1 < arg2))
+}
+
+fn number_gt(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
+    let [arg1, arg2] = args2_numbers(args)?;
+    Ok(Expr::Bool(arg1 > arg2))
+}
+
+fn number_lt_eq(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
+    // println!("number_lt_eq({:?})", args);
+    let [arg1, arg2] = args2_numbers(args)?;
+    Ok(Expr::Bool(arg1 <= arg2))
+}
+
+fn number_gt_eq(_env: &mut Env, args: &[Expr]) -> Result<Expr> {
+    let [arg1, arg2] = args2_numbers(args)?;
+    Ok(Expr::Bool(arg1 >= arg2))
 }
 
 // ----------------------------------------------------------------------------

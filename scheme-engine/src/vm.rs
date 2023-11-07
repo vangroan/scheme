@@ -9,7 +9,22 @@ use std::mem;
 pub fn eval(closure: Handle<Closure>) -> Result<Expr> {
     let mut vm = Vm::new();
     let result = vm.run(closure);
-    println!("VM eval stack: {:?}", vm.operand);
+
+    if let Err(_) = &result {
+        println!("evaluation stack");
+        println!("---");
+        for expr in vm.operand.iter().rev() {
+            println!("  {}", expr.repr());
+        }
+        println!("---");
+    }
+
+    result
+}
+
+pub fn call(closure: Handle<Closure>, args: &[Expr]) -> Result<Expr> {
+    let mut vm = Vm::new();
+    let result = vm.run_args(closure, args);
     result
 }
 
@@ -60,6 +75,10 @@ impl Vm {
     }
 
     fn run(&mut self, closure: Handle<Closure>) -> Result<Expr> {
+        self.run_args(closure, &[])
+    }
+
+    fn run_args(&mut self, closure: Handle<Closure>, args: &[Expr]) -> Result<Expr> {
         if !self.frames.is_empty() {
             // The machine is already executing something, so
             // a new closure cannot be called.
@@ -74,9 +93,16 @@ impl Vm {
         // to this closure on the stack.
         self.operand.push(Expr::Closure(closure.clone()));
 
+        for arg in args {
+            self.operand.push(arg.clone());
+        }
+
+        // Arguments and local variables start right after the closure value.
+        let stack_offset = self.operand.len() - args.len();
+
         self.frames.push(CallFrame {
             closure,
-            stack_offset: self.operand.len(),
+            stack_offset,
             up_values: Vec::new(),
             pc: 0,
         });
@@ -139,6 +165,8 @@ fn run_interpreter(vm: &mut Vm) -> Result<Expr> {
                         continue;
                     }
                     None => {
+                        debug_assert!(vm.operand.is_empty(), "when evaluation is done only the initial closure must be left on the stack");
+                        vm.operand.clear();
                         return Ok(value);
                     }
                 }
@@ -149,7 +177,7 @@ fn run_interpreter(vm: &mut Vm) -> Result<Expr> {
 
 /// Run the bytecode instruction loop.
 fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
-    println!("eval stack: {:?}", vm.operand);
+    // println!("eval stack: {:?}", vm.operand);
 
     // Pull relevant state into flat local variables to reduce the
     // overhead of jumping pointers and bookkeeping of borrowing objects.
@@ -182,9 +210,17 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
             Op::PushFalse => {
                 vm.operand.push(Expr::Bool(false));
             }
+            Op::JumpFalse(addr) => {
+                if let Some(Expr::Bool(false)) = vm.operand.last() {
+                    pc = addr.as_usize();
+                }
+            }
+            Op::Jump(addr) => {
+                pc = addr.as_usize();
+            }
 
             Op::Return => {
-                println!("return");
+                // println!("return");
                 let value = vm.operand.pop().unwrap_or(Expr::Void);
 
                 // Close up-values.
@@ -196,23 +232,23 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
                     }
                 }
 
-                println!("returning {value:?}");
+                // println!("returning {value:?}");
 
                 return Ok(ProcAction::Return(value));
             }
             Op::LoadEnvVar(symbol) => {
-                println!("load env-var: {symbol:?}");
+                // println!("load env-var: {symbol:?}");
                 let value = env.get_var(symbol).cloned().unwrap_or(Expr::Void);
                 vm.operand.push(value);
             }
             Op::StoreEnvVar(symbol) => {
-                println!("store env-var: {symbol:?}");
+                // println!("store env-var: {symbol:?}");
                 let value = vm.operand.last().cloned().unwrap_or(Expr::Void);
                 env.set_var(symbol, value)?;
                 // don't pop
             }
             Op::LoadUpValue(up_value_id) => {
-                println!("load up-value: {up_value_id:?}");
+                // println!("load up-value: {up_value_id:?}");
                 match closure.up_values[up_value_id.as_usize()].borrow().clone() {
                     UpValue::Open(stack_pos) => {
                         let value = vm.operand[stack_pos].clone();
@@ -240,24 +276,18 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
                     .get(frame.stack_offset + local_id.as_usize())
                     .cloned()
                     .unwrap_or(Expr::Void);
-                println!(
-                    "load local var: {local_id:?}:{value:?}, stack pos {}",
-                    frame.stack_offset + local_id.as_usize()
-                );
+                // println!("load local var: {local_id:?}:{value:?}, stack pos {}", frame.stack_offset + local_id.as_usize());
                 vm.operand.push(value);
             }
             Op::StoreLocalVar(local_id) => {
                 let value = vm.operand.last().cloned().unwrap_or(Expr::Void);
-                println!(
-                    "store local var: {local_id:?}:{value:?}, stack pos {}",
-                    frame.stack_offset + local_id.as_usize()
-                );
+                // println!("store local var: {local_id:?}:{value:?}, stack pos {}", frame.stack_offset + local_id.as_usize());
                 vm.operand[frame.stack_offset + local_id.as_usize()] = value;
-                println!("stack size: {}", vm.operand.len());
+                // println!("stack size: {}", vm.operand.len());
                 // don't pop
             }
             Op::PushConstant(constant_id) => {
-                println!("push constant {constant_id:?}");
+                // println!("push constant {constant_id:?}");
                 let value = proc
                     .constants
                     .get(constant_id.as_usize())
@@ -266,14 +296,14 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
                 vm.operand.push(value);
             }
             Op::Pop => {
-                println!("pop");
+                // println!("pop");
                 let _ = vm.operand.pop();
             }
             Op::CaptureValue(_) => {
                 unreachable!("capture-value must only be processed by closure creation")
             }
             Op::CreateClosure(proc_id) => {
-                println!("create closure {proc_id:?}");
+                // println!("create closure {proc_id:?}");
                 // The constant stores the procedure definition to instantiate.
                 let prototype = env
                     .procedures
@@ -284,9 +314,9 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
                 // Read the capture arguments.
                 let mut up_values = Vec::new();
 
-                println!("program counter: {pc}");
+                // println!("program counter: {pc}");
                 for i in 0..prototype.up_value_count {
-                    println!("processing argument {i}");
+                    // println!("processing argument {i}");
                     let op = ops[pc].clone();
                     match op {
                         Op::CaptureValue(origin) => {
@@ -322,14 +352,14 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
                     }
                     pc += 1;
                 }
-                println!("program counter: {pc}");
+                // println!("program counter: {pc}");
 
                 let closure = Closure::with_up_values(prototype, up_values);
                 let closure_handle = Handle::new(closure);
                 vm.operand.push(Expr::Closure(closure_handle));
             }
             Op::CallClosure { arity } => {
-                println!("call closure, arity {arity}");
+                // println!("call closure, arity {arity}");
 
                 let lo = vm.operand.len() - arity as usize;
 
@@ -350,7 +380,7 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
             // The stack must be prepared with a variable holding the function pointer,
             // followed by all the arguments to be passed to the call.
             Op::CallNative { arity } => {
-                println!("call native, arity {arity}");
+                // println!("call native, arity {arity}");
 
                 // TODO: Support variadic procedures
                 let lo = vm.operand.len() - arity as usize;
@@ -394,8 +424,8 @@ fn run_instructions(vm: &mut Vm, frame: &mut CallFrame) -> Result<ProcAction> {
     }
 }
 
-/// Call a procedure or native function.
-#[inline]
-fn call(vm: &mut Vm) -> Result<ProcAction> {
-    todo!()
-}
+// Call a procedure or native function.
+// #[inline]
+// fn call(vm: &mut Vm) -> Result<ProcAction> {
+//     todo!()
+// }

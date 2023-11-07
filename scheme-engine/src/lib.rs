@@ -20,7 +20,7 @@ pub use self::env::Env;
 pub use self::expr::{Closure, Expr, Proc};
 pub use self::handle::Handle;
 pub use self::parser::parse;
-pub use self::vm::eval;
+pub use self::vm::{call, eval};
 
 pub mod prelude {}
 

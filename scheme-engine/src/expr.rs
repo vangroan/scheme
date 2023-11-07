@@ -77,6 +77,21 @@ impl Expr {
         }
     }
 
+    pub fn as_sequence(&self) -> Option<&[Expr]> {
+        match self {
+            Expr::Sequence(expressions) => Some(expressions.as_slice()),
+            Expr::List(expressions) => Some(expressions.as_slice()),
+            _ => None,
+        }
+    }
+
+    pub fn as_closure(&self) -> Option<&Handle<Closure>> {
+        match self {
+            Expr::Closure(handle) => Some(handle),
+            _ => None,
+        }
+    }
+
     #[inline]
     pub fn repr(&self) -> ExprRepr {
         ExprRepr { expr: self }
@@ -111,10 +126,26 @@ pub struct ExprRepr<'a> {
     expr: &'a Expr,
 }
 
+impl<'a> ExprRepr<'a> {
+    fn fmt_expressions(&self, f: &mut fmt::Formatter, expressions: &[Expr]) -> fmt::Result {
+        write!(f, "(")?;
+        for (idx, expr) in expressions.iter().enumerate() {
+            if idx != 0 {
+                write!(f, " ")?;
+            }
+            let repr = ExprRepr { expr };
+            write!(f, "{repr}")?;
+        }
+        write!(f, ")")?;
+        Ok(())
+    }
+}
+
 impl<'a> fmt::Display for ExprRepr<'a> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self.expr {
             Expr::Nil => write!(f, "'()"),
+            Expr::Void => write!(f, "#!void"),
             Expr::Bool(boolean) => {
                 if *boolean {
                     write!(f, "#t")
@@ -129,21 +160,11 @@ impl<'a> fmt::Display for ExprRepr<'a> {
                 Keyword::Dot => write!(f, "."),
             },
             Expr::List(list) => {
-                write!(f, "(")?;
-                for expr in list {
-                    let repr = ExprRepr { expr };
-                    write!(f, "{repr}")?;
-                }
-                write!(f, ")")?;
+                self.fmt_expressions(f, list)?;
                 Ok(())
             }
             Expr::Sequence(expressions) => {
-                write!(f, "(")?;
-                for expr in expressions {
-                    let repr = ExprRepr { expr };
-                    write!(f, "{repr}")?;
-                }
-                write!(f, ")")?;
+                self.fmt_expressions(f, expressions)?;
                 Ok(())
             }
             Expr::Procedure(procedure) => {
@@ -160,7 +181,9 @@ impl<'a> fmt::Display for ExprRepr<'a> {
                 //  TODO!("keep Rust function name")
                 write!(f, "<native-function>")
             }
-            _ => todo!("expression type repr not implemented yet"),
+            unsupported_type => {
+                todo!("expression type repr not implemented yet: {unsupported_type:?}")
+            }
         }
     }
 }
