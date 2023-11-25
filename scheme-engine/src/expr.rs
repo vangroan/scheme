@@ -1,6 +1,4 @@
 use std::cell::{Ref, RefCell};
-use std::fmt;
-use std::fmt::Formatter;
 use std::rc::Rc;
 
 use smol_str::SmolStr;
@@ -9,7 +7,7 @@ use crate::env::Env;
 use crate::error::Result;
 use crate::handle::{Handle, RcWeak};
 use crate::opcode::Op;
-
+use crate::ExprRepr;
 
 /// Shorthand utilities.
 pub mod utils {
@@ -181,7 +179,7 @@ impl Expr {
         }
     }
 
-    pub fn try_as_pair(&self) -> Option<Ref<Pair>> {
+    pub fn try_pair(&self) -> Option<Ref<Pair>> {
         match self {
             Expr::Pair(pair_handle) => Some(pair_handle.borrow()),
             _ => None,
@@ -238,72 +236,6 @@ impl From<f64> for Expr {
     #[inline(always)]
     fn from(value: f64) -> Self {
         Expr::Number(value)
-    }
-}
-
-pub struct ExprRepr<'a> {
-    expr: &'a Expr,
-}
-
-impl<'a> ExprRepr<'a> {
-    fn fmt_expressions(&self, f: &mut fmt::Formatter, expressions: &[Expr]) -> fmt::Result {
-        write!(f, "(")?;
-        for (idx, expr) in expressions.iter().enumerate() {
-            if idx != 0 {
-                write!(f, " ")?;
-            }
-            let repr = ExprRepr { expr };
-            write!(f, "{repr}")?;
-        }
-        write!(f, ")")?;
-        Ok(())
-    }
-}
-
-impl<'a> fmt::Display for ExprRepr<'a> {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        match self.expr {
-            Expr::Nil => write!(f, "'()"),
-            Expr::Void => write!(f, "#!void"),
-            Expr::Bool(boolean) => {
-                if *boolean {
-                    write!(f, "#t")
-                } else {
-                    write!(f, "#f")
-                }
-            }
-            Expr::Number(number) => write!(f, "{number}"),
-            Expr::String(string) => write!(f, "{string}"),
-            Expr::Ident(name) => write!(f, "{name}"),
-            Expr::Keyword(keyword) => match keyword {
-                Keyword::Dot => write!(f, "."),
-            },
-            Expr::List(list) => {
-                self.fmt_expressions(f, list)?;
-                Ok(())
-            }
-            Expr::Sequence(expressions) => {
-                self.fmt_expressions(f, expressions)?;
-                Ok(())
-            }
-            Expr::Procedure(procedure) => {
-                write!(f, "<procedure {:?}>", Rc::as_ptr(procedure))
-            }
-            Expr::Closure(closure) => {
-                write!(
-                    f,
-                    "<procedure {:?}>",
-                    Rc::as_ptr(&closure.borrow().procedure_rc())
-                )
-            }
-            Expr::NativeFunc(func) => {
-                //  TODO!("keep Rust function name")
-                write!(f, "<native-function>")
-            }
-            unsupported_type => {
-                todo!("expression type repr not implemented yet: {unsupported_type:?}")
-            }
-        }
     }
 }
 

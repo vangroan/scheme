@@ -22,8 +22,8 @@ pub use self::env::Env;
 pub use self::expr::{utils, Closure, Expr, Pair, Proc};
 pub use self::handle::Handle;
 pub use self::parser::parse;
-pub use self::vm::{call, eval};
 pub use self::repr::ExprRepr;
+pub use self::vm::{call, eval};
 
 pub mod prelude {}
 
