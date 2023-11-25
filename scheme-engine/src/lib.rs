@@ -10,6 +10,7 @@ mod lexer;
 mod limits;
 mod opcode;
 mod parser;
+mod repr;
 mod span;
 mod symbol;
 mod token;
@@ -18,9 +19,10 @@ mod vm;
 pub use self::compiler::compile;
 pub use self::core::init_core;
 pub use self::env::Env;
-pub use self::expr::{Closure, Expr, Proc};
+pub use self::expr::{utils, Closure, Expr, Pair, Proc};
 pub use self::handle::Handle;
 pub use self::parser::parse;
+pub use self::repr::ExprRepr;
 pub use self::vm::{call, eval};
 
 pub mod prelude {}

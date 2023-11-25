@@ -52,3 +52,39 @@ impl<T: fmt::Debug> fmt::Debug for Handle<T> {
         f.debug_tuple("Handle").field(&*self.rc.borrow()).finish()
     }
 }
+
+/// A [`Handle`] shared in a circular reference.
+pub enum Shared<T> {
+    Strong(Handle<T>),
+    Weak(RcWeak<RefCell<T>>),
+}
+
+impl<T> Shared<T> {
+    pub fn strong(&self) -> Option<&Handle<T>> {
+        match self {
+            Shared::Strong(handle) => Some(handle),
+            Shared::Weak(_) => None,
+        }
+    }
+
+    pub fn upgrade(&self) -> Option<Handle<T>> {
+        match self {
+            Shared::Strong(handle) => Some(handle.clone()),
+            Shared::Weak(weak) => weak.upgrade().map(|rc| Handle { rc }),
+        }
+    }
+
+    pub fn weak(&self) -> Option<&RcWeak<RefCell<T>>> {
+        match self {
+            Shared::Strong(_) => None,
+            Shared::Weak(weak) => Some(weak),
+        }
+    }
+
+    pub fn downgrade(&self) -> RcWeak<RefCell<T>> {
+        match self {
+            Shared::Strong(handle) => handle.downgrade(),
+            Shared::Weak(weak) => weak.clone(),
+        }
+    }
+}
